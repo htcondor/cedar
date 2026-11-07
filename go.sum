@@ -1,5 +1,5 @@
-github.com/PelicanPlatform/classad v0.33.2 h1:h7gHhtyfEw70cHI3Dt+FtkjBuaIrSSF+dg8Q2+TB8FA=
-github.com/PelicanPlatform/classad v0.33.2/go.mod h1:PEBQZp1N+KqUcAPMWhHqdCq+P5OSEYT2V14SeiXVM04=
+github.com/PelicanPlatform/classad v0.36.0 h1:1hXDnp2i34Ut/yv4YKRroAcD5L/E82r8XzV2BhSbHYY=
+github.com/PelicanPlatform/classad v0.36.0/go.mod h1:PEBQZp1N+KqUcAPMWhHqdCq+P5OSEYT2V14SeiXVM04=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
