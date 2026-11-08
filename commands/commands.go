@@ -244,6 +244,21 @@ const (
 	QMGMT_WRITE_CMD = QMGMT_BASE + 2 // Queue management write
 )
 
+// ClassAd Commands ("CA commands")
+//
+// A CA command is not dispatched by its own command integer. The integer put on
+// the wire is one of the two entry points below -- CA_AUTH_CMD when the client
+// forces authentication, CA_CMD when it does not -- and the receiving daemon
+// then reads the Command *string* out of the request ClassAd to decide which
+// verb to run (getCmdFromReliSock, condor_utils/classad_command_util.cpp). The
+// per-verb constants below therefore exist to name that string, not to be sent.
+const (
+	CA_AUTH_CMD = CA_AUTH_CMD_BASE + 0 // Authenticated ClassAd-command entry point (1000)
+	CA_CMD      = CA_CMD_BASE + 0      // Unauthenticated ClassAd-command entry point (1200)
+
+	CA_UPDATE_MACHINE_AD = CA_AUTH_CMD_BASE + 9 // Merge attributes into the startd machine ad (1009)
+)
+
 // HAD Commands
 const (
 	HAD_ALIVE_CMD               = HAD_COMMANDS_BASE + 0 // HAD alive
@@ -300,6 +315,7 @@ const (
 	FileTransferCommand
 	CredentialCommand
 	OtherCommand
+	ClassAdCommand
 )
 
 // CommandInfo holds information about a command
@@ -416,6 +432,26 @@ var commandTable = map[int]CommandInfo{
 		Code:        CONFIG_VAL,
 		Type:        SchedulerCommand,
 		Description: "Get configuration value",
+	},
+
+	// ClassAd commands
+	CA_AUTH_CMD: {
+		Name:        "CA_AUTH_CMD",
+		Code:        CA_AUTH_CMD,
+		Type:        ClassAdCommand,
+		Description: "Authenticated ClassAd-command entry point",
+	},
+	CA_CMD: {
+		Name:        "CA_CMD",
+		Code:        CA_CMD,
+		Type:        ClassAdCommand,
+		Description: "Unauthenticated ClassAd-command entry point",
+	},
+	CA_UPDATE_MACHINE_AD: {
+		Name:        "CA_UPDATE_MACHINE_AD",
+		Code:        CA_UPDATE_MACHINE_AD,
+		Type:        ClassAdCommand,
+		Description: "Merge attributes into the startd machine ad",
 	},
 }
 
