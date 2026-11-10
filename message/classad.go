@@ -166,8 +166,12 @@ func putClassAdToMessageWithOptions(m *Message, ad *classad.ClassAd, config *Put
 			continue // Should not happen if filtering worked correctly
 		}
 
-		// Format as HTCondor attribute assignment
-		exprStr := fmt.Sprintf("%s = %s", attr, expr.String())
+		// Format as HTCondor attribute assignment, unparsed as OLD ClassAd to match
+		// how the value will be read back: _putClassAd() serializes with
+		// SetOldClassAd(true, true) (condor_utils/classad_oldnew.cpp). Writing a string
+		// with new-ClassAd escaping would send a backslash as `\\`, which every
+		// old-ClassAd reader -- C++, and now this one -- takes as two characters.
+		exprStr := fmt.Sprintf("%s = %s", attr, expr.UnparseOld())
 
 		if encryptSecrets && (ClassAdAttributeIsPrivateAny(attr) || isAttrInList(attr, config.EncryptedAttrs)) {
 			if err := m.putSecretExpr(ctx, exprStr); err != nil {
@@ -552,22 +556,19 @@ func parseAndInsertExpression(ad *classad.ClassAd, exprStr string) error {
 		return nil
 	}
 
-	// Fall back to full ClassAd parsing for complex expressions
-	expr, err := classad.ParseExpr(valueStr)
+	// Values on the CEDAR wire are OLD-ClassAd text, so parse them as such. The
+	// reference does the same unconditionally: getClassAd() hands every expression to
+	// InsertLongFormAttrValue(), which parses with SetOldClassAd(true)
+	// (condor_utils/classad_oldnew.cpp, classad/classad.cpp InsertViaCache).
+	//
+	// The difference that matters is string literals. Old-ClassAd lexing performs no
+	// escape conversion at all -- a backslash is a literal byte and only \" is an
+	// escape -- so a startd's OSIssue = "\S" is the two bytes `\` `S`, from agetty's
+	// /etc/issue, and a host blocklist regexp("warlock21\.beocat\.ksu\.edu") keeps the
+	// backslashes that make its dots literal. Reading those with new-ClassAd rules
+	// drops the backslash silently and the value is quietly wrong.
+	expr, err := classad.ParseExprOld(valueStr)
 	if err != nil {
-		// The strict new-ClassAd lexer rejected the value. Before giving up, try to
-		// read it as an OLD-ClassAd string literal (backslash literal), because the
-		// CEDAR wire also carries old-ClassAd-quoted strings from C++ daemons and the
-		// collector's forwarding path -- e.g. OSIssue = "\S" (agetty /etc/issue escape),
-		// which new-ClassAd lexing rejects as an invalid escape sequence. Only a
-		// value that is unambiguously a lone quoted string is accepted here; anything
-		// else keeps the original parse error.
-		if t := strings.TrimSpace(valueStr); len(t) >= 2 && t[0] == '"' && t[len(t)-1] == '"' {
-			if s, ok := decodeOldClassAdString(t[1 : len(t)-1]); ok {
-				_ = ad.Set(attr, s) // ClassAd.Set always returns nil, safe to ignore
-				return nil
-			}
-		}
 		return fmt.Errorf("failed to parse expression value '%s': %w", valueStr, err)
 	}
 
@@ -618,36 +619,6 @@ func tryInsertLiteral(ad *classad.ClassAd, attr, valueStr string) error {
 
 	// Not a simple literal, caller should use full parser
 	return fmt.Errorf("not a simple literal")
-}
-
-// decodeOldClassAdString decodes the content between the quotes of an OLD-ClassAd
-// string literal: a backslash is literal except that \" is an escaped double-quote,
-// mirroring C++ Lexer::tokenizeStringOld and inverting ast.AppendQuoteStringOld. It is
-// used only as a fallback after the strict new-ClassAd expression parser rejects the
-// value -- e.g. a startd's OSIssue = "\S" (the two bytes `\` `S` from an agetty
-// /etc/issue escape), which new-ClassAd lexing rejects as an invalid escape but which
-// an old-ClassAd sender (C++, or the collector's forwarding path) legitimately emits.
-// It returns ok=false for an UNescaped interior double-quote -- that means the value is
-// not a lone string literal (e.g. the expression `"a" + "b"`), so the caller keeps the
-// original parse error rather than mis-reading it as a string.
-func decodeOldClassAdString(inner string) (string, bool) {
-	if !strings.ContainsAny(inner, "\\\"") {
-		return inner, true // no escapes, no embedded quotes
-	}
-	var b strings.Builder
-	b.Grow(len(inner))
-	for i := 0; i < len(inner); i++ {
-		if inner[i] == '\\' && i+1 < len(inner) && inner[i+1] == '"' {
-			b.WriteByte('"') // \" -> literal quote (the only old-ClassAd string escape)
-			i++
-			continue
-		}
-		if inner[i] == '"' {
-			return "", false // an unescaped interior quote: not a lone string literal
-		}
-		b.WriteByte(inner[i]) // every other byte -- including a lone backslash -- is literal
-	}
-	return b.String(), true
 }
 
 // Helper functions for ClassAd options processing
