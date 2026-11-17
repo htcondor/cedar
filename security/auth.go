@@ -1934,9 +1934,18 @@ func (a *Authenticator) resumeSession(ctx context.Context, entry *SessionEntry, 
 	// Create message for session resumption request
 	msg := message.NewMessageForStream(a.stream)
 
+	// A session the caller named outright, with SecurityConfig.SessionID, is
+	// not a cached optimization: it is the credential for this dial, and
+	// nothing stands behind it. ClientHandshake's explicit branch resumes it
+	// or fails, so dropping it on a failed exchange leaves the retry with no
+	// credential at all -- it reports "pre-registered session not found in
+	// cache" and the reason the first attempt failed is gone. Keep it, and the
+	// retry either works or names what actually went wrong.
+	pinned := a.config.SessionID != ""
+
 	// Send DC_AUTHENTICATE command
 	// A failure anywhere in the resumption exchange leaves this connection
-	// unusable and the cached session suspect: the peer may have restarted
+	// unusable and a *cached* session suspect: the peer may have restarted
 	// without a session store (SID unknown), be mid-restart (reset/EOF), or have
 	// expired the session. Treat every such failure as a resumption failure --
 	// drop the cached session and report a SessionResumptionError so
@@ -1946,7 +1955,9 @@ func (a *Authenticator) resumeSession(ctx context.Context, entry *SessionEntry, 
 	// the stale session cached, so every reconnect re-attempted the doomed
 	// resumption.)
 	fail := func(reason string, err error) (*SecurityNegotiation, error) {
-		cache.Invalidate(entry.ID())
+		if !pinned {
+			cache.Invalidate(entry.ID())
+		}
 		return nil, &SessionResumptionError{SessionID: entry.ID(), Reason: reason, Cause: err}
 	}
 
@@ -2011,7 +2022,9 @@ func (a *Authenticator) resumeSession(ctx context.Context, entry *SessionEntry, 
 	if returnCode, ok := responseAd.EvaluateAttrString("ReturnCode"); ok {
 		if returnCode == "SID_NOT_FOUND" {
 			// Session not found on server, invalidate locally and return specific error
-			cache.Invalidate(entry.ID())
+			if !pinned {
+				cache.Invalidate(entry.ID())
+			}
 			return nil, &SessionResumptionError{
 				SessionID: entry.ID(),
 				Reason:    "session not found on server",
