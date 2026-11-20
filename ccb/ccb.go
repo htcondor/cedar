@@ -54,6 +54,18 @@ const (
 	AttrProxyMode               = "ProxyMode"               // server -> requester: reply will be proxied on this socket
 	AttrCCBStreamingUnsupported = "CCBStreamingUnsupported" // server -> requester: typed "not supported" failure
 
+	// AttrCCBProxyMode tells a TARGET that the request it is being asked to serve
+	// is proxied, so the reverse connection goes back to the broker this target
+	// registered through rather than to the address the request names.
+	//
+	// In proxy mode a broker always names its own address in AttrMyAddress, so
+	// that field says nothing a target does not already know -- and a target
+	// reached through a relay cannot route to it at all, because the only address
+	// it can dial is the one it registered through. For an incoming reversal the
+	// first hop out is always the target's own broker, which is in its
+	// configuration. See golang-ccb docs/SPLICE_HELPER.md.
+	AttrCCBProxyMode = "CCBProxyMode"
+
 	// Recursive inbound tunnel (Model 1) + audit. Must match the C++ wire names
 	// (src/condor_includes/condor_attributes.h).
 	//
