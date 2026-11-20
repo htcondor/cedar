@@ -391,6 +391,14 @@ func (r *brokerReg) handleRequest(ctx context.Context, ad *classad.ClassAd) {
 		AttrMyAddress: myAddr,
 	})
 
+	// A proxied request goes back to the broker we registered through: the first
+	// hop out, which we know from our own configuration. The address the broker
+	// named is its own and tells us nothing, and a registrant reached through a
+	// relay cannot route to it -- the only address it can dial is r.addr.
+	if proxied, ok := AdBool(ad, AttrCCBProxyMode); ok && proxied {
+		myAddr = r.addr
+	}
+
 	dialCtx, cancel := context.WithTimeout(ctx, r.cfg.DialTimeout)
 	defer cancel()
 	// The reverse-connect target is usually the requester's own (directly
