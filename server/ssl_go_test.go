@@ -296,22 +296,36 @@ func TestCppPingSSL(t *testing.T) {
 		t.Skip("condor_ping not installed")
 	}
 	certs := newSSLTestCerts(t)
-	sinful := newSSLServer(t, certs, security.AuthSSL)
-	// The alias is the name the C++ client checks the server certificate against.
-	sinful = strings.TrimSuffix(sinful, ">") + "?alias=localhost>"
 
 	for _, tc := range []struct {
-		name  string
-		extra []string
-		user  string
+		name      string
+		authLevel security.SecurityLevel
+		extra     []string
+		user      string
+		wantDeny  bool
 	}{
-		{"server certificate only", nil, UnauthenticatedFQU},
-		{"mutual certificates", []string{
+		// SSL completes the TLS handshake for a peer presenting no client
+		// certificate, but it has identified nobody, so the session is
+		// unauthenticated and a server requiring authentication denies the
+		// command -- as DaemonCore does for an unauthenticated socket
+		// (daemon_command.cpp: !m_sock->isAuthenticated() plus
+		// ATTR_SEC_AUTHENTICATION_NEW == REQUIRED).
+		{"server certificate only, authentication required", security.SecurityRequired, nil, "", true},
+		// The same peer against a server that only prefers authentication: the
+		// command is authorized, encrypted, and mapped to the unauthenticated
+		// identity. Encryption without a client identity stays usable.
+		{"server certificate only, authentication optional", security.SecurityOptional, nil, UnauthenticatedFQU, false},
+		{"mutual certificates", security.SecurityRequired, []string{
 			"AUTH_SSL_CLIENT_CERTFILE = " + certs.clientCert,
 			"AUTH_SSL_CLIENT_KEYFILE = " + certs.clientKey,
-		}, "ssl@unmapped"},
+		}, "ssl@unmapped", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			sinful := newSSLServerWithAuth(t, certs, tc.authLevel, security.AuthSSL)
+			// The alias is the name the C++ client checks the server
+			// certificate against.
+			sinful = strings.TrimSuffix(sinful, ">") + "?alias=localhost>"
+
 			config := cppToolConfig(t, append([]string{
 				"SEC_CLIENT_AUTHENTICATION_METHODS = SSL",
 				"SEC_CLIENT_ENCRYPTION = REQUIRED",
@@ -320,6 +334,15 @@ func TestCppPingSSL(t *testing.T) {
 			}, tc.extra...)...)
 			stdout, stderr, err := runTool(t, config, condorPing, "-addr", sinful, "-verbose", "READ")
 			t.Logf("condor_ping: %v\nstdout:\n%s", err, stdout)
+
+			if tc.wantDeny {
+				authorized := regexp.MustCompile(`Authorized:\s+TRUE`)
+				if err == nil && authorized.MatchString(stdout) {
+					t.Error("condor_ping was authorized for READ with no client certificate against a server requiring authentication")
+				}
+				return
+			}
+
 			if err != nil {
 				t.Logf("stderr:\n%s", stderr)
 				t.Fatalf("condor_ping READ over SSL failed: %v", err)
