@@ -141,13 +141,23 @@ type SessionCache struct {
 	mu         sync.RWMutex
 	sessions   map[string]*SessionEntry
 	commandMap map[string]string // Maps {tag,addr,<cmd>} to session ID
+	lastSweep  time.Time         // when expired entries were last dropped
 }
+
+// sessionSweepInterval bounds how often storing a session sweeps expired ones.
+// Entries last an hour by default, so sweeping on every store would be pure
+// overhead; sweeping never let the map grow for the life of the process.
+const sessionSweepInterval = time.Minute
 
 // NewSessionCache creates a new session cache
 func NewSessionCache() *SessionCache {
 	return &SessionCache{
 		sessions:   make(map[string]*SessionEntry),
 		commandMap: make(map[string]string),
+		// Start the clock now, so a fresh cache behaves as a plain map for the
+		// first interval: Store stays a plain insert and InvalidateExpired is
+		// the only sweeper until then.
+		lastSweep: time.Now(),
 	}
 }
 
@@ -156,6 +166,25 @@ func (c *SessionCache) Store(entry *SessionEntry) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.sessions[entry.id] = entry
+	c.sweepExpiredLocked()
+}
+
+// sweepExpiredLocked drops expired entries, at most once per
+// sessionSweepInterval. The caller holds c.mu.
+//
+// Storing is the growth path, so it is also where the sweep belongs: a server
+// mints a fresh id for every handshake and stores it with a one-hour duration,
+// and a peer that never resumes leaves an entry unreachable by id. Nothing
+// else collects those -- Invalidate is reached only on a client-side
+// resumption failure, and LookupNonExpired drops just the one id it was asked
+// for -- so the map grew for the life of the process.
+func (c *SessionCache) sweepExpiredLocked() {
+	now := time.Now()
+	if !c.lastSweep.IsZero() && now.Sub(c.lastSweep) < sessionSweepInterval {
+		return
+	}
+	c.lastSweep = now
+	c.invalidateExpiredLocked()
 }
 
 // storeNew adds entry unless an unexpired session already holds its id, in
@@ -305,12 +334,17 @@ func (c *SessionCache) Invalidate(id string) bool {
 func (c *SessionCache) InvalidateExpired() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.invalidateExpiredLocked()
+}
 
-	now := time.Now()
+// invalidateExpiredLocked is InvalidateExpired with c.mu already held.
+func (c *SessionCache) invalidateExpiredLocked() int {
 	count := 0
 
 	for id, entry := range c.sessions {
-		if !entry.expiration.IsZero() && now.After(entry.expiration) {
+		// IsExpired reads the expiration under the entry's own lock; reading
+		// entry.expiration directly here raced RenewLease, which writes it.
+		if entry.IsExpired() {
 			delete(c.sessions, id)
 			count++
 		}
