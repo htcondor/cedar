@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bbockelm/cedar/commands"
-	"github.com/bbockelm/cedar/stream"
+	"github.com/htcondor/cedar/commands"
+	"github.com/htcondor/cedar/stream"
 )
 
 // TestServerContinuesUnauthenticatedWhenClientGivesUp is the server half of the

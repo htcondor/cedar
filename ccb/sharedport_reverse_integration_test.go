@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bbockelm/cedar/addresses"
-	"github.com/bbockelm/cedar/ccb"
-	"github.com/bbockelm/cedar/internal/condortest"
-	sharedportserver "github.com/bbockelm/cedar/server/sharedport"
-	"github.com/bbockelm/cedar/stream"
+	"github.com/htcondor/cedar/addresses"
+	"github.com/htcondor/cedar/ccb"
+	"github.com/htcondor/cedar/internal/condortest"
+	sharedportserver "github.com/htcondor/cedar/server/sharedport"
+	"github.com/htcondor/cedar/stream"
 )
 
 // TestCCBReverseConnectThroughInProcessSharedPort exercises the combination

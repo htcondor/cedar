@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bbockelm/cedar/addresses"
-	"github.com/bbockelm/cedar/ccb"
-	"github.com/bbockelm/cedar/internal/condortest"
-	"github.com/bbockelm/cedar/security"
-	"github.com/bbockelm/cedar/stream"
+	"github.com/htcondor/cedar/addresses"
+	"github.com/htcondor/cedar/ccb"
+	"github.com/htcondor/cedar/internal/condortest"
+	"github.com/htcondor/cedar/security"
+	"github.com/htcondor/cedar/stream"
 )
 
 // ccbTestSecurity returns a permissive client/daemon security config matching

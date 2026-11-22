@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bbockelm/cedar/commands"
-	"github.com/bbockelm/cedar/message"
-	"github.com/bbockelm/cedar/security"
-	"github.com/bbockelm/cedar/server/sharedport"
+	"github.com/htcondor/cedar/commands"
+	"github.com/htcondor/cedar/message"
+	"github.com/htcondor/cedar/security"
+	"github.com/htcondor/cedar/server/sharedport"
 )
 
 // TestCppFSClientThroughSharedPort runs the installed HTCondor condor_status

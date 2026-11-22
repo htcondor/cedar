@@ -23,8 +23,8 @@ import (
 	"time"
 
 	"github.com/PelicanPlatform/classad/classad"
-	"github.com/bbockelm/cedar/commands"
-	"github.com/bbockelm/cedar/stream"
+	"github.com/htcondor/cedar/commands"
+	"github.com/htcondor/cedar/stream"
 )
 
 // TestClientHandshake_RetriesAfterFirstMethodFails is the end-to-end

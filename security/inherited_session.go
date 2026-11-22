@@ -33,8 +33,8 @@ import (
 	"time"
 
 	"github.com/PelicanPlatform/classad/classad"
-	"github.com/bbockelm/cedar/addresses"
-	"github.com/bbockelm/cedar/commands"
+	"github.com/htcondor/cedar/addresses"
+	"github.com/htcondor/cedar/commands"
 	"golang.org/x/crypto/hkdf"
 )
 

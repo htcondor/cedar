@@ -19,8 +19,8 @@ import (
 	"net"
 	"testing"
 
-	"github.com/bbockelm/cedar/commands"
-	"github.com/bbockelm/cedar/stream"
+	"github.com/htcondor/cedar/commands"
+	"github.com/htcondor/cedar/stream"
 )
 
 // TestFSAuthentication tests the FS authentication method

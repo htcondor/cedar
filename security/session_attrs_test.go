@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bbockelm/cedar/stream"
+	"github.com/htcondor/cedar/stream"
 )
 
 // attrPair runs one client connection against a server configured with

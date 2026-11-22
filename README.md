@@ -84,7 +84,7 @@ package main
 import (
     "fmt"
     "github.com/PelicanPlatform/classad/classad"
-    "github.com/bbockelm/cedar/message"
+    "github.com/htcondor/cedar/message"
 )
 
 func main() {
@@ -141,8 +141,8 @@ package main
 import (
     "context"
     "log"
-    "github.com/bbockelm/cedar/client"
-    "github.com/bbockelm/cedar/security"
+    "github.com/htcondor/cedar/client"
+    "github.com/htcondor/cedar/security"
 )
 
 func main() {
@@ -214,7 +214,7 @@ This implementation is based on HTCondor's C++ codebase:
 
 ```bash
 # Clone the repository
-git clone https://github.com/bbockelm/cedar
+git clone https://github.com/htcondor/cedar
 cd cedar
 
 # Install dependencies

@@ -3,7 +3,7 @@ package ccb
 import (
 	"testing"
 
-	"github.com/bbockelm/cedar/security"
+	"github.com/htcondor/cedar/security"
 )
 
 // TestBrokerSupportsStreamingVersionGate pins the CCB streaming version gate to the

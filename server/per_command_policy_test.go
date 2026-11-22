@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/bbockelm/cedar/security"
+	"github.com/htcondor/cedar/security"
 )
 
 // advertiseLevelConfig is a per-level policy for ADVERTISE_STARTD, built on its

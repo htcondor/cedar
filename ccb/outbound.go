@@ -7,8 +7,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/bbockelm/cedar/security"
-	"github.com/bbockelm/cedar/version"
+	"github.com/htcondor/cedar/security"
+	"github.com/htcondor/cedar/version"
 )
 
 // OutboundMinVersion is the minimum broker $CondorVersion$ assumed to support the

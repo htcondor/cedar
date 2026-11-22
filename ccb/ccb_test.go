@@ -5,7 +5,7 @@ import (
 	"net"
 	"testing"
 
-	"github.com/bbockelm/cedar/stream"
+	"github.com/htcondor/cedar/stream"
 )
 
 func TestGenerateConnectID(t *testing.T) {

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bbockelm/cedar/commands"
-	"github.com/bbockelm/cedar/stream"
+	"github.com/htcondor/cedar/commands"
+	"github.com/htcondor/cedar/stream"
 )
 
 // TestServerOfferedAuthMethodsVetoesSSLWithoutCert unit-tests the filter: SSL and

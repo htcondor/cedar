@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bbockelm/cedar/security"
+	"github.com/htcondor/cedar/security"
 )
 
 // countingListener accepts TCP connections on 127.0.0.1 and counts them,

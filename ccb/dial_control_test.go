@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bbockelm/cedar/addresses"
+	"github.com/htcondor/cedar/addresses"
 )
 
 // TestDialControlSeesBroker checks DialOptions.DialControl is applied to the

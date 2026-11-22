@@ -10,11 +10,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/bbockelm/cedar/addresses"
-	"github.com/bbockelm/cedar/client/sharedport"
-	"github.com/bbockelm/cedar/security"
-	"github.com/bbockelm/cedar/stream"
-	"github.com/bbockelm/cedar/version"
+	"github.com/htcondor/cedar/addresses"
+	"github.com/htcondor/cedar/client/sharedport"
+	"github.com/htcondor/cedar/security"
+	"github.com/htcondor/cedar/stream"
+	"github.com/htcondor/cedar/version"
 )
 
 // StreamingMinVersion is the minimum broker $CondorVersion$ assumed to support CCB

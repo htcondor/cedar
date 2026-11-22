@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	cedarserver "github.com/bbockelm/cedar/server"
+	cedarserver "github.com/htcondor/cedar/server"
 )
 
 // TestOutboundConnectWire pins the normative CCB_PROXY_CONNECT request wire format

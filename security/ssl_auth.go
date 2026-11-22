@@ -28,8 +28,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bbockelm/cedar/addresses"
-	"github.com/bbockelm/cedar/message"
+	"github.com/htcondor/cedar/addresses"
+	"github.com/htcondor/cedar/message"
 )
 
 // SSL authentication state constants matching HTCondor's implementation

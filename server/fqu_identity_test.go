@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bbockelm/cedar/security"
-	"github.com/bbockelm/cedar/stream"
+	"github.com/htcondor/cedar/security"
+	"github.com/htcondor/cedar/stream"
 )
 
 // tokenHandshake serves one ADMINISTRATOR command to a client that

@@ -18,7 +18,7 @@ import (
 
 	"golang.org/x/crypto/hkdf"
 
-	"github.com/bbockelm/cedar/stream"
+	"github.com/htcondor/cedar/stream"
 )
 
 // setupTestSigningKeys creates temporary signing key files for testing
