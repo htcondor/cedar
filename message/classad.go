@@ -351,6 +351,19 @@ func (m *Message) GetClassAdRaw(ctx context.Context) (string, error) {
 func (m *Message) GetClassAdRawBody(ctx context.Context, numExprs int) (string, error) {
 	var b strings.Builder
 	for i := 0; i < numExprs; i++ {
+		// The count comes from the peer and is no evidence the expressions
+		// exist. GetString's plaintext branch turns the io.EOF from ensureData
+		// into a successful empty read, so the loop used to run the full count
+		// past end-of-message, appending a newline each pass: an 8-byte count
+		// of 2,000,000 yielded a 2 MB string and a nil error. Stop at the real
+		// end of the data instead of trusting the count.
+		exhausted, err := m.PeekEndOfMessage(ctx)
+		if err != nil {
+			return "", fmt.Errorf("failed to check for more expressions at %d (expected %d): %w", i, numExprs, err)
+		}
+		if exhausted {
+			return "", fmt.Errorf("malformed ClassAd: message ended after %d of %d expressions", i, numExprs)
+		}
 		exprStr, err := m.GetString(ctx)
 		if err != nil {
 			return "", fmt.Errorf("failed to read expression %d (expected %d): %w", i, numExprs, err)
@@ -366,6 +379,14 @@ func (m *Message) GetClassAdRawBody(ctx context.Context, numExprs int) (string, 
 			if err != nil {
 				return "", fmt.Errorf("failed to read secret expression %d (expected %d): %w", i, numExprs, err)
 			}
+		}
+		// Expressions are joined with newlines, so one containing a newline
+		// injects extra attribute lines into the text the consumer parses --
+		// letting a sender forge attributes the receiver believes it controls
+		// while a per-expression filter sees only the first line. isTypeName
+		// rejects the same bytes in MyType/TargetType for the same reason.
+		if strings.ContainsAny(exprStr, "\n\r") {
+			return "", fmt.Errorf("malformed ClassAd: expression %d contains a newline", i)
 		}
 		b.WriteString(exprStr)
 		b.WriteByte('\n')
