@@ -10,6 +10,8 @@ require github.com/pkg/errors v0.9.1
 
 require github.com/golang-jwt/jwt/v5 v5.3.1
 
+require github.com/jcmturner/goidentity/v6 v6.0.1 // indirect
+
 require (
 	github.com/hashicorp/go-uuid v1.0.3 // indirect
 	github.com/jcmturner/aescts/v2 v2.0.0 // indirect

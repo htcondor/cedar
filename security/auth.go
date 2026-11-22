@@ -828,9 +828,18 @@ func (a *Authenticator) performFullAuthentication(ctx context.Context, cache *Se
 	if err := a.setupStreamEncryption(negotiation); err != nil {
 		return nil, fmt.Errorf("failed to setup stream encryption: %w", err)
 	}
-	// The server's reply carries its decisions: honour them as HTCondor's
-	// client does (authenticate_inner_finish fails "enable_enc no key to use").
-	if err := a.requireEnactedKey(negotiation.ServerConfig.Encryption == "YES", negotiation.ServerConfig.Integrity == "YES"); err != nil {
+	// A session has enacted crypto if EITHER end settled on it, so both sources
+	// have to be consulted. ServerConfig holds the server's reply verbatim
+	// ("YES"/"NO", parseServerSecurityAd casts the string straight to
+	// SecurityLevel), which is why it is compared as a literal and not as a
+	// level. Checking only that let a rogue or rewritten reply of
+	// Encryption="NO" satisfy a client configured Encryption=REQUIRED, which
+	// then sent its command in cleartext; checking only our own reconciled
+	// value would miss a server enacting encryption we were merely optional
+	// about.
+	encryptionEnacted := negotiation.Encryption || negotiation.ServerConfig.Encryption == "YES"
+	integrityEnacted := negotiation.Integrity || negotiation.ServerConfig.Integrity == "YES"
+	if err := a.requireEnactedKey(encryptionEnacted, integrityEnacted); err != nil {
 		return nil, err
 	}
 
@@ -981,6 +990,28 @@ func (a *Authenticator) handleSessionResumption(ctx context.Context, sessionID s
 			return nil, err
 		}
 		return nil, fmt.Errorf("session %s resumed with unsupported crypto method %s", redactSessionID(sessionID), clientCrypto)
+	}
+
+	// Resuming proves possession of the session key: the AES-GCM AAD binds the
+	// handshake digest and the resume nonce, so a peer without the key cannot
+	// produce a readable frame. An entry with no key offers no such proof, and
+	// the restore below would hand its authenticated identity to anyone who
+	// learns or guesses the session id -- the id travels in cleartext on a
+	// session that negotiated no crypto, and GenerateSessionID is enumerable.
+	// Refuse it, as with a session keyed by a cipher we cannot read; the peer
+	// then falls back to a full handshake, which is where identity is proved.
+	if entry.KeyInfo() == nil {
+		if policy := entry.Policy(); policy != nil {
+			authed, _ := policy.EvaluateAttrBool("Authenticated")
+			user, _ := policy.EvaluateAttrString("User")
+			if authed && user != "" {
+				slog.Warn(fmt.Sprintf("🔐 SERVER: Session %s carries an authenticated identity but no session key; refusing to resume it without proof of possession", redactSessionID(sessionID)), "destination", "cedar")
+				if err := rejectSession(); err != nil {
+					return nil, err
+				}
+				return nil, fmt.Errorf("session %s has no session key; refusing to resume an authenticated session unproven", redactSessionID(sessionID))
+			}
+		}
 	}
 
 	slog.Info(fmt.Sprintf("🔐 SERVER: Found session %s, resuming...", redactSessionID(sessionID)), "destination", "cedar")
@@ -1222,6 +1253,20 @@ func (a *Authenticator) ServerHandshakeWithMessage(ctx context.Context, msg *mes
 	triedAuthentication := negotiation.Authentication
 	if err := a.handleServerAuthentication(ctx, negotiation); err != nil {
 		return nil, fmt.Errorf("server authentication phase failed: %w", err)
+	}
+
+	// A method can succeed without identifying anyone: SSL accepts a peer that
+	// presents no client certificate (ClientAuth is VerifyClientCertIfGiven) and
+	// yields the unauthenticated identity. Nothing on that path clears the flag,
+	// so such a session counted as authenticated -- satisfying a command that
+	// requires authentication, and being handed to an authorizer under that
+	// literal name. Clear it here, before the post-auth ad and storeSession, so
+	// the command gate, the authorized identity and the cached session policy
+	// all agree the peer is unauthenticated.
+	if negotiation.Authentication && IsUnauthenticatedFQU(negotiation.User) {
+		slog.Warn("🔐 SERVER: authentication completed without identifying the peer; treating the session as unauthenticated",
+			"method", negotiation.NegotiatedAuth, "user", negotiation.User, "destination", "cedar")
+		negotiation.Authentication = false
 	}
 
 	// NOW set up stream encryption AFTER authentication is complete
@@ -2185,6 +2230,14 @@ func (a *Authenticator) negotiateSecurity(negotiation *SecurityNegotiation) erro
 		// The client reads the server's decisions back (Encryption and
 		// Integrity are YES or NO); it only refines them with its own levels.
 		shouldEncrypt = clientWantsEncryption(serverEncryption, clientEncryption, negotiation.NegotiatedCrypto)
+		shouldIntegrity = clientWantsIntegrity(negotiation.ServerConfig.Integrity, negotiation.ClientConfig.Integrity, negotiation.NegotiatedCrypto)
+		// AES-GCM encrypts and integrity-checks every frame, so an authenticated
+		// AES session has enacted both regardless of how the levels reconciled.
+		// The server records it the same way, so both ends agree.
+		if shouldAuthenticate && negotiation.NegotiatedCrypto == CryptoAES {
+			shouldEncrypt = true
+			shouldIntegrity = true
+		}
 	} else {
 		// The server decides, as DaemonCore does with
 		// SecMan::ReconcileSecurityPolicyAds (condor_secman.cpp): each feature
@@ -2255,6 +2308,24 @@ func clientWantsEncryption(serverEncryption, clientEncryption SecurityLevel, neg
 	case serverEncryption == SecurityNever || clientEncryption == SecurityNever:
 		return false
 	case serverEncryption == SecurityPreferred || clientEncryption == SecurityPreferred:
+		return negotiatedCrypto != ""
+	}
+	return false
+}
+
+// clientWantsIntegrity is the integrity twin of clientWantsEncryption, and
+// keeps its shape: either side requiring it settles it, either side refusing it
+// settles it, and a preference needs a negotiated method. Note that a server
+// reply carries a decision ("YES"/"NO"), not a level, so in practice it is the
+// client's own level that decides here; the server's declaration is enforced
+// separately where requireEnactedKey is called.
+func clientWantsIntegrity(serverIntegrity, clientIntegrity SecurityLevel, negotiatedCrypto CryptoMethod) bool {
+	switch {
+	case serverIntegrity == SecurityRequired || clientIntegrity == SecurityRequired:
+		return true
+	case serverIntegrity == SecurityNever || clientIntegrity == SecurityNever:
+		return false
+	case serverIntegrity == SecurityPreferred || clientIntegrity == SecurityPreferred:
 		return negotiatedCrypto != ""
 	}
 	return false
@@ -2934,6 +3005,22 @@ func (a *Authenticator) handleClientAuthentication(ctx context.Context, negotiat
 			slog.Debug("🔐 CLIENT: Server rejected all remaining methods", "destination", "cedar")
 			break
 		}
+
+		// The server must choose from what we offered. Acting on any other bit
+		// would run a method we deliberately withheld -- a TOKEN challenge we
+		// filtered out, or a KDC round trip for KERBEROS we never advertised.
+		// It also breaks the loop's progress: the failure path below clears
+		// authMethodToBitmask(selectedMethod), so a bit that was never set in
+		// availableBitmask leaves it unchanged and the same offer goes out
+		// forever, one full auth attempt per iteration, with no iteration cap.
+		if serverResponse&availableBitmask == 0 {
+			return a.clientRequiredAuthError(fmt.Errorf(
+				"server selected authentication method bitmask 0x%x, which is not among those offered (0x%x)",
+				serverResponse, availableBitmask))
+		}
+		// Narrow to the overlap, so whatever is selected is a bit we hold and
+		// clearing it always makes progress.
+		serverResponse &= availableBitmask
 
 		// Convert server response to method, naming it as we configured it
 		// (TOKEN and IDTOKENS share one bit).

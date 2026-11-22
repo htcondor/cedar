@@ -32,6 +32,7 @@ import (
 	"github.com/jcmturner/gokrb5/v8/iana/keyusage"
 	"github.com/jcmturner/gokrb5/v8/keytab"
 	"github.com/jcmturner/gokrb5/v8/messages"
+	"github.com/jcmturner/gokrb5/v8/service"
 	"github.com/jcmturner/gokrb5/v8/types"
 )
 
@@ -301,7 +302,30 @@ func (a *Authenticator) kerberosServer(ctx context.Context, negotiation *Securit
 		_ = a.kerberosSendInt(ctx, kerberosDENY)
 		return fmt.Errorf("kerberos: unmarshal AP_REQ: %w", err)
 	}
-	if ok, verr := apReq.Verify(kt, kerberosClockSkew, types.HostAddress{}, nil); verr != nil || !ok {
+	// Verify through the service layer, which adds the replay cache RFC 4120
+	// section 3.2.3 requires. APReq.Verify on its own decrypts the ticket,
+	// checks its validity and the clock skew and matches the CName, but keeps
+	// no record of the authenticators it has already seen -- so a captured
+	// AP_REQ replayed inside the skew window verified a second time. KERBEROS
+	// contributes nothing to the CEDAR session key (it comes from the
+	// framework's ECDH, which a replaying peer performs itself) and the server
+	// asks the peer for nothing but a GRANT integer after the AP_REP, so the
+	// replay yielded a fully working session under the victim's principal.
+	//
+	// The remaining Settings defaults match what was passed before -- zero
+	// ClientAddress, nil KeytabPrincipal, RequireHostAddr off. MaxClockSkew is
+	// passed explicitly to keep our own value rather than the package default.
+	//
+	// PAC decoding is off because gokrb5's decoder expects an Active Directory
+	// PAC: an MIT KDC issues a ticket whose PAC carries no KerbValidationInfo,
+	// which makes GetPACType return isPAC with an error and fails the whole
+	// verification ("PAC Info Buffers does not contain a KerbValidationInfo").
+	// Nothing here reads PAC data; identity comes from the ticket's CName.
+	ktSettings := service.NewSettings(kt,
+		service.MaxClockSkew(kerberosClockSkew),
+		service.DecodePAC(false),
+	)
+	if ok, _, verr := service.VerifyAPREQ(&apReq, ktSettings); verr != nil || !ok {
 		_ = a.kerberosSendInt(ctx, kerberosDENY)
 		return fmt.Errorf("kerberos: AP_REQ verification failed: %v", verr)
 	}

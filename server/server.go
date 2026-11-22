@@ -456,21 +456,51 @@ func (s *Server) postAuthPolicy(authUser, peerAddr string, authenticated, encryp
 	return fqu, valid
 }
 
-// Serve accepts connections from l until the context is cancelled or Accept
-// fails permanently. Each connection is handled in its own goroutine.
+// Serve accepts connections from l until the context is cancelled or the
+// listener is closed. Each connection is handled in its own goroutine.
 func (s *Server) Serve(ctx context.Context, l net.Listener) error {
 	go func() {
 		<-ctx.Done()
 		_ = l.Close()
 	}()
+	// Backoff for a listener that is still open but momentarily cannot produce
+	// a connection, as when the process is out of file descriptors.
+	const (
+		acceptRetryMin = 5 * time.Millisecond
+		acceptRetryMax = time.Second
+	)
+	var acceptDelay time.Duration
 	for {
 		conn, err := l.Accept()
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			return err
+			// Only a closed listener is terminal. Returning on every error made
+			// a transient descriptor exhaustion (EMFILE/ENFILE) permanent: the
+			// accept loop exited, the listener stayed bound so nothing else
+			// could take the port, and the daemon was deaf from then on even
+			// once descriptors were free again. MaxPendingConnections does not
+			// prevent it -- the descriptor is spent before admit runs, and the
+			// default cap is above a typical RLIMIT_NOFILE.
+			if errors.Is(err, net.ErrClosed) {
+				return err
+			}
+			if acceptDelay == 0 {
+				acceptDelay = acceptRetryMin
+			} else if acceptDelay *= 2; acceptDelay > acceptRetryMax {
+				acceptDelay = acceptRetryMax
+			}
+			slog.Error("cedar/server: accept failed; retrying",
+				"error", err, "retry_in", acceptDelay, "destination", "cedar")
+			select {
+			case <-time.After(acceptDelay):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			continue
 		}
+		acceptDelay = 0
 		// Enable TCP keepalives on the accepted connection so a silently-dead
 		// peer is detected instead of blocking the handler goroutine forever.
 		// Best-effort: a no-op for non-TCP listeners and never fatal.

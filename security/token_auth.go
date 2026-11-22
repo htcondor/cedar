@@ -1012,16 +1012,25 @@ func (a *Authenticator) validateTokenAndDeriveKeys(authData *TokenAuthData, nego
 		return fmt.Errorf("token validation failed: %w", err)
 	}
 
-	// Extract subject from claims
+	// Extract the subject from the claims. The identity has to come from the
+	// signed token and nowhere else: authData.ClientID already holds the client
+	// ID the peer sent on the wire, so leaving it in place when "sub" is absent
+	// made the emptiness check below pass on the peer's own string -- the token
+	// holder then authenticated as whatever identity they chose. A capability
+	// token legitimately carries no "sub"; it is not a token that names anyone,
+	// so it cannot authenticate an identity here.
+	subject := ""
 	if sub, ok := claims["sub"]; ok {
-		if subStr, ok := sub.(string); ok {
-			authData.ClientID = subStr
-		} else {
+		subStr, isString := sub.(string)
+		if !isString {
 			return fmt.Errorf("JWT subject claim is not a string")
 		}
+		subject = subStr
 	}
-
-	if authData.ClientID == "" {
+	// Assign before the check, so the peer's asserted id is gone either way:
+	// the identity is the token's subject or nothing at all.
+	authData.ClientID = subject
+	if subject == "" {
 		return fmt.Errorf("JWT token missing required subject (sub) claim")
 	}
 
