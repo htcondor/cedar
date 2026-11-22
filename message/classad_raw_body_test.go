@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bbockelm/cedar/stream"
+	"github.com/htcondor/cedar/stream"
 )
 
 // rawBodySender writes the given expression strings (null-terminated, as CEDAR

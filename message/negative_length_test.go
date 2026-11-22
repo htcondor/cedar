@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bbockelm/cedar/stream"
+	"github.com/htcondor/cedar/stream"
 )
 
 // encryptedPair returns a keyed stream pair: the encrypted string path is the

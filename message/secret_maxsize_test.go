@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bbockelm/cedar/stream"
+	"github.com/htcondor/cedar/stream"
 )
 
 // A peer must not escape the size cap by prefixing an expression with the
