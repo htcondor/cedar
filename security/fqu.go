@@ -93,3 +93,13 @@ func (c *SecurityConfig) LocalUIDDomain() string {
 	}
 	return c.UIDDomain
 }
+
+// IsUnauthenticatedFQU reports whether user is the identity an authentication
+// method yields when it completed without identifying the peer -- an SSL peer
+// that presented no client certificate reaches this. A session carrying it has
+// not authenticated anyone, so it must not satisfy a policy that requires
+// authentication, and it must not be authorized under that literal name as
+// though it were a real identity.
+func IsUnauthenticatedFQU(user string) bool {
+	return user == joinFQU("unauthenticated", UnmappedDomain)
+}

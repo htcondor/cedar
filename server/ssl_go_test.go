@@ -60,9 +60,17 @@ const sslEchoCmd = 60124 // arbitrary authenticated command
 // condor_ping READ queries.
 func newSSLServer(t *testing.T, certs sslTestCerts, methods ...security.AuthMethod) string {
 	t.Helper()
+	return newSSLServerWithAuth(t, certs, security.SecurityRequired, methods...)
+}
+
+// newSSLServerWithAuth is newSSLServer with an explicit Authentication level,
+// so a test can tell apart a server that demands an identified peer from one
+// that merely prefers one.
+func newSSLServerWithAuth(t *testing.T, certs sslTestCerts, authLevel security.SecurityLevel, methods ...security.AuthMethod) string {
+	t.Helper()
 	srv := New(&security.SecurityConfig{
 		AuthMethods:    methods,
-		Authentication: security.SecurityRequired,
+		Authentication: authLevel,
 		CryptoMethods:  []security.CryptoMethod{security.CryptoAES},
 		Encryption:     security.SecurityRequired,
 		Integrity:      security.SecurityOptional,
@@ -172,8 +180,25 @@ func TestGoSSLAuthentication(t *testing.T) {
 	certs := newSSLTestCerts(t)
 	addr := newSSLServer(t, certs, security.AuthSSL)
 
-	t.Run("server certificate only", func(t *testing.T) {
-		got, err := sslEcho(t, addr, sslClientConfig(certs.caCert, security.AuthSSL))
+	// A peer presenting no client certificate completes the TLS handshake --
+	// ClientAuth is VerifyClientCertIfGiven -- but SSL has then identified
+	// nobody, and the identity it yields is UnauthenticatedFQU. This server
+	// requires authentication, so the command must be refused rather than
+	// authorized under that literal name.
+	t.Run("server certificate only is refused when authentication is required", func(t *testing.T) {
+		_, err := sslEcho(t, addr, sslClientConfig(certs.caCert, security.AuthSSL))
+		if err == nil {
+			t.Fatal("an SSL peer with no client certificate satisfied Authentication=REQUIRED")
+		}
+	})
+
+	// The same peer against a server that only prefers authentication: the
+	// session is admitted, encrypted, and recorded as unauthenticated. This is
+	// the legitimate case -- encryption without a client identity -- and the
+	// guard above must not break it.
+	t.Run("server certificate only is admitted when authentication is optional", func(t *testing.T) {
+		optAddr := newSSLServerWithAuth(t, certs, security.SecurityOptional, security.AuthSSL)
+		got, err := sslEcho(t, optAddr, sslClientConfig(certs.caCert, security.AuthSSL))
 		if err != nil {
 			t.Fatalf("SSL authentication: %v", err)
 		}
@@ -216,11 +241,16 @@ func TestGoSSLAuthentication(t *testing.T) {
 	t.Run("many handshakes", func(t *testing.T) {
 		for i := 0; i < 10; i++ {
 			cfg := sslClientConfig(certs.caCert, security.AuthSSL)
-			if i%2 == 1 {
+			withCert := i%2 == 1
+			if withCert {
 				cfg.CertFile, cfg.KeyFile = certs.clientCert, certs.clientKey
 			}
-			if _, err := sslEcho(t, addr, cfg); err != nil {
-				t.Fatalf("handshake %d: %v", i, err)
+			_, err := sslEcho(t, addr, cfg)
+			if withCert && err != nil {
+				t.Fatalf("handshake %d with a client certificate: %v", i, err)
+			}
+			if !withCert && err == nil {
+				t.Fatalf("handshake %d had no client certificate yet satisfied Authentication=REQUIRED", i)
 			}
 		}
 	})

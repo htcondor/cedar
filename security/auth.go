@@ -1255,6 +1255,20 @@ func (a *Authenticator) ServerHandshakeWithMessage(ctx context.Context, msg *mes
 		return nil, fmt.Errorf("server authentication phase failed: %w", err)
 	}
 
+	// A method can succeed without identifying anyone: SSL accepts a peer that
+	// presents no client certificate (ClientAuth is VerifyClientCertIfGiven) and
+	// yields the unauthenticated identity. Nothing on that path clears the flag,
+	// so such a session counted as authenticated -- satisfying a command that
+	// requires authentication, and being handed to an authorizer under that
+	// literal name. Clear it here, before the post-auth ad and storeSession, so
+	// the command gate, the authorized identity and the cached session policy
+	// all agree the peer is unauthenticated.
+	if negotiation.Authentication && IsUnauthenticatedFQU(negotiation.User) {
+		slog.Warn("🔐 SERVER: authentication completed without identifying the peer; treating the session as unauthenticated",
+			"method", negotiation.NegotiatedAuth, "user", negotiation.User, "destination", "cedar")
+		negotiation.Authentication = false
+	}
+
 	// NOW set up stream encryption AFTER authentication is complete
 	if err := a.setupStreamEncryption(negotiation); err != nil {
 		return nil, fmt.Errorf("failed to setup stream encryption: %w", err)
