@@ -318,6 +318,10 @@ func (s *Stream) ReceiveFrame(ctx context.Context) ([]byte, error) {
 
 	// Handle zero-length messages
 	if messageLength == 0 {
+		// See ReceiveFrameWithEnd: unverifiable on an encrypted stream.
+		if s.gcm != nil {
+			return nil, fmt.Errorf("zero-length frame on encrypted stream")
+		}
 		return []byte{}, nil
 	}
 
@@ -376,6 +380,14 @@ func (s *Stream) ReceiveFrameWithEnd(ctx context.Context) ([]byte, byte, error) 
 
 	// Handle zero-length messages
 	if messageLength == 0 {
+		// An encrypted stream can never legitimately produce one: every frame
+		// carries the 16-byte GCM tag (plus the IV on the first), so
+		// calculateEncryptedSize never yields 0. Accepting it would return an
+		// end-of-message flag that never passed AEAD verification, letting an
+		// on-path peer splice message boundaries into the session without the key.
+		if s.gcm != nil {
+			return nil, 0, fmt.Errorf("zero-length frame on encrypted stream")
+		}
 		// Track header for AAD digest calculation
 		if s.recvDigest != nil && s.finalRecvDigest == nil {
 			s.recvDigest.Write(header)
