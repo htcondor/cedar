@@ -828,9 +828,18 @@ func (a *Authenticator) performFullAuthentication(ctx context.Context, cache *Se
 	if err := a.setupStreamEncryption(negotiation); err != nil {
 		return nil, fmt.Errorf("failed to setup stream encryption: %w", err)
 	}
-	// The server's reply carries its decisions: honour them as HTCondor's
-	// client does (authenticate_inner_finish fails "enable_enc no key to use").
-	if err := a.requireEnactedKey(negotiation.ServerConfig.Encryption == "YES", negotiation.ServerConfig.Integrity == "YES"); err != nil {
+	// A session has enacted crypto if EITHER end settled on it, so both sources
+	// have to be consulted. ServerConfig holds the server's reply verbatim
+	// ("YES"/"NO", parseServerSecurityAd casts the string straight to
+	// SecurityLevel), which is why it is compared as a literal and not as a
+	// level. Checking only that let a rogue or rewritten reply of
+	// Encryption="NO" satisfy a client configured Encryption=REQUIRED, which
+	// then sent its command in cleartext; checking only our own reconciled
+	// value would miss a server enacting encryption we were merely optional
+	// about.
+	encryptionEnacted := negotiation.Encryption || negotiation.ServerConfig.Encryption == "YES"
+	integrityEnacted := negotiation.Integrity || negotiation.ServerConfig.Integrity == "YES"
+	if err := a.requireEnactedKey(encryptionEnacted, integrityEnacted); err != nil {
 		return nil, err
 	}
 
@@ -2185,6 +2194,14 @@ func (a *Authenticator) negotiateSecurity(negotiation *SecurityNegotiation) erro
 		// The client reads the server's decisions back (Encryption and
 		// Integrity are YES or NO); it only refines them with its own levels.
 		shouldEncrypt = clientWantsEncryption(serverEncryption, clientEncryption, negotiation.NegotiatedCrypto)
+		shouldIntegrity = clientWantsIntegrity(negotiation.ServerConfig.Integrity, negotiation.ClientConfig.Integrity, negotiation.NegotiatedCrypto)
+		// AES-GCM encrypts and integrity-checks every frame, so an authenticated
+		// AES session has enacted both regardless of how the levels reconciled.
+		// The server records it the same way, so both ends agree.
+		if shouldAuthenticate && negotiation.NegotiatedCrypto == CryptoAES {
+			shouldEncrypt = true
+			shouldIntegrity = true
+		}
 	} else {
 		// The server decides, as DaemonCore does with
 		// SecMan::ReconcileSecurityPolicyAds (condor_secman.cpp): each feature
@@ -2255,6 +2272,24 @@ func clientWantsEncryption(serverEncryption, clientEncryption SecurityLevel, neg
 	case serverEncryption == SecurityNever || clientEncryption == SecurityNever:
 		return false
 	case serverEncryption == SecurityPreferred || clientEncryption == SecurityPreferred:
+		return negotiatedCrypto != ""
+	}
+	return false
+}
+
+// clientWantsIntegrity is the integrity twin of clientWantsEncryption, and
+// keeps its shape: either side requiring it settles it, either side refusing it
+// settles it, and a preference needs a negotiated method. Note that a server
+// reply carries a decision ("YES"/"NO"), not a level, so in practice it is the
+// client's own level that decides here; the server's declaration is enforced
+// separately where requireEnactedKey is called.
+func clientWantsIntegrity(serverIntegrity, clientIntegrity SecurityLevel, negotiatedCrypto CryptoMethod) bool {
+	switch {
+	case serverIntegrity == SecurityRequired || clientIntegrity == SecurityRequired:
+		return true
+	case serverIntegrity == SecurityNever || clientIntegrity == SecurityNever:
+		return false
+	case serverIntegrity == SecurityPreferred || clientIntegrity == SecurityPreferred:
 		return negotiatedCrypto != ""
 	}
 	return false
