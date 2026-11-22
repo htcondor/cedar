@@ -306,6 +306,19 @@ func (m *Message) getSecretString(ctx context.Context) (string, error) {
 	return m.GetString(ctx)
 }
 
+// getSecretStringWithMaxSize is getSecretString under a size budget, for the
+// readers that enforce one. Without it a peer defeated the whole cap by
+// prefixing an expression with the secret marker: the marker itself fit the
+// budget, and the oversized field behind it was then read by the unlimited
+// GetString and only counted afterwards, once it was already in memory.
+func (m *Message) getSecretStringWithMaxSize(ctx context.Context, maxSize int) (string, error) {
+	if sc, ok := m.stream.(secretCrypto); ok {
+		sc.PrepareCryptoForSecret()
+		defer sc.RestoreCryptoAfterSecret()
+	}
+	return m.GetStringWithMaxSize(ctx, maxSize)
+}
+
 // putSecretExpr writes a private attribute the way C++ putClassAd does on a
 // channel that can encrypt but is not currently encrypting: the SECRET_MARKER
 // expression in the clear (flushed with any preceding buffered expressions), then
@@ -494,7 +507,15 @@ func getClassAdFromMessageWithMaxSize(m *Message, maxSize int, ctx context.Conte
 		// items, one counted expression -- see GetClassAdRawBody). Consume the secret
 		// as the real expression instead of desyncing on the marker.
 		if exprStr == SecretMarker {
-			exprStr, err = m.getSecretString(ctx)
+			if maxSize > 0 {
+				remainingBytes := maxSize - totalBytesRead
+				if remainingBytes <= 0 {
+					return nil, fmt.Errorf("ClassAd exceeds maximum size (%d bytes) while reading secret expression %d", maxSize, i)
+				}
+				exprStr, err = m.getSecretStringWithMaxSize(ctx, remainingBytes)
+			} else {
+				exprStr, err = m.getSecretString(ctx)
+			}
 			if err != nil {
 				return nil, fmt.Errorf("failed to read secret expression %d (expected %d): %w", i, numExprs, err)
 			}
