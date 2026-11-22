@@ -25,10 +25,34 @@ import (
 //   - NON-expiring (no SessionExpires): it lives as long as the child, since the parent supervises
 //     the child's lifetime.
 //
-// validCommands scopes the command ids the session may be resumed for (e.g. an htcondordb
-// DB-session command). Pass a single command; a claim id cannot carry ',' in some fields, so a
-// one-command scope is the safe, common case.
+// validCommands is NOT a security boundary. It is advertised in the session policy and mapped
+// on peerAddr so a server-side command_map lookup can find the session, but dispatch does not
+// consult it: the server re-evaluates authorization against the current Authorizer instead
+// (Server.sessionSatisfies), deliberately, because an advertised command set goes stale across a
+// reconfig. A child handed a session minted with one command id can therefore run anything the
+// Authorizer allows condor@parent, which for a parent identity is usually DAEMON or better.
+//
+// To actually bound what the child may do, use MintInheritableSessionWithLimits: the
+// authorization bounding set IS enforced, ahead of the Authorizer, for resumed sessions too.
+//
+// Pass a single command; a claim id cannot carry ',' in some fields, so a one-command
+// advertisement is the safe, common case.
 func MintInheritableSession(peerAddr string, validCommands ...int) (sessionID, inheritToken string, err error) {
+	return MintInheritableSessionWithLimits(peerAddr, nil, validCommands...)
+}
+
+// MintInheritableSessionWithLimits is MintInheritableSession with an authorization bounding set
+// -- the levels ("READ", "WRITE", "DAEMON", ...) the minted session may ever be used for. Unlike
+// validCommands this is enforced: it is carried in the session policy as LimitAuthorization, and
+// Server.sessionSatisfies refuses a command whose registered levels fall outside it before it
+// ever consults the Authorizer, on a resumed session as much as a fresh one.
+//
+// The limits are chosen by the parent and never read back off the wire, so a child cannot widen
+// them; a peer-supplied set could only ever narrow its own authorization.
+//
+// A nil or empty set means no bounding set, which is what a minted session carried before this
+// existed: the child is then limited only by what the Authorizer grants condor@parent.
+func MintInheritableSessionWithLimits(peerAddr string, authorizationLimits []string, validCommands ...int) (sessionID, inheritToken string, err error) {
 	key, err := GenerateSecuritySessionKey()
 	if err != nil {
 		return "", "", fmt.Errorf("mint session: generating key: %w", err)
@@ -62,6 +86,17 @@ func MintInheritableSession(peerAddr string, validCommands ...int) (sessionID, i
 		return "", "", fmt.Errorf("mint session: %w", err)
 	}
 	entry.SetInherited(true) // never persist; re-minted each child launch
+
+	// Record the bounding set on the stored entry, which is where the server reads it
+	// (handleSessionResumption). It is deliberately not routed through the session_info:
+	// the claim-id round trip copies a fixed attribute list that excludes
+	// LimitAuthorization, and adding it there would change every startd claim as well.
+	// The child does not need it -- the limits bind the parent's server, not the child.
+	if len(authorizationLimits) > 0 {
+		if pol := entry.Policy(); pol != nil {
+			_ = pol.Set(AttrLimitAuthorization, strings.Join(authorizationLimits, ","))
+		}
+	}
 
 	cache := GetSessionCache()
 	cache.Store(entry)
