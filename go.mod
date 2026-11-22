@@ -2,7 +2,7 @@ module github.com/bbockelm/cedar
 
 go 1.26.0
 
-require github.com/PelicanPlatform/classad v0.38.2
+require github.com/PelicanPlatform/classad v0.43.0
 
 require golang.org/x/crypto v0.59.0
 
