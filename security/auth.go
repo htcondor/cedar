@@ -2970,6 +2970,22 @@ func (a *Authenticator) handleClientAuthentication(ctx context.Context, negotiat
 			break
 		}
 
+		// The server must choose from what we offered. Acting on any other bit
+		// would run a method we deliberately withheld -- a TOKEN challenge we
+		// filtered out, or a KDC round trip for KERBEROS we never advertised.
+		// It also breaks the loop's progress: the failure path below clears
+		// authMethodToBitmask(selectedMethod), so a bit that was never set in
+		// availableBitmask leaves it unchanged and the same offer goes out
+		// forever, one full auth attempt per iteration, with no iteration cap.
+		if serverResponse&availableBitmask == 0 {
+			return a.clientRequiredAuthError(fmt.Errorf(
+				"server selected authentication method bitmask 0x%x, which is not among those offered (0x%x)",
+				serverResponse, availableBitmask))
+		}
+		// Narrow to the overlap, so whatever is selected is a bit we hold and
+		// clearing it always makes progress.
+		serverResponse &= availableBitmask
+
 		// Convert server response to method, naming it as we configured it
 		// (TOKEN and IDTOKENS share one bit).
 		selectedMethod := methodForBitmask(clientMethods, serverResponse)
