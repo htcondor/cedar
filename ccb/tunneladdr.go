@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/bbockelm/cedar/security"
+	"github.com/htcondor/cedar/security"
 )
 
 // GetTunnelAddress asks a CCB broker (an inside CCB) for its derived tunnel

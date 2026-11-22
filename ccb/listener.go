@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/PelicanPlatform/classad/classad"
-	"github.com/bbockelm/cedar/security"
-	"github.com/bbockelm/cedar/stream"
+	"github.com/htcondor/cedar/security"
+	"github.com/htcondor/cedar/stream"
 )
 
 // InboundMeta carries the routing/audit fields from the reverse-connect request

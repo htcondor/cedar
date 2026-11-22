@@ -5,7 +5,7 @@ import (
 	"time"
 
 	golang_classads "github.com/PelicanPlatform/classad/classad"
-	"github.com/bbockelm/cedar/stream"
+	"github.com/htcondor/cedar/stream"
 )
 
 // TestSessionCachePeerAddressBug verifies that sessions with different peer addresses

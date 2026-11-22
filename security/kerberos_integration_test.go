@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bbockelm/cedar/commands"
-	"github.com/bbockelm/cedar/internal/condortest"
-	"github.com/bbockelm/cedar/security"
-	"github.com/bbockelm/cedar/stream"
+	"github.com/htcondor/cedar/commands"
+	"github.com/htcondor/cedar/internal/condortest"
+	"github.com/htcondor/cedar/security"
+	"github.com/htcondor/cedar/stream"
 )
 
 // TestKerberosAuthenticationIntegration authenticates the pure-Go Kerberos client

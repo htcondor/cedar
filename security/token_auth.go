@@ -41,7 +41,7 @@ import (
 	"github.com/pkg/errors"
 	"golang.org/x/crypto/hkdf"
 
-	"github.com/bbockelm/cedar/message"
+	"github.com/htcondor/cedar/message"
 )
 
 // ErrNetwork is a singleton error used to wrap network/communication errors

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/bbockelm/cedar/commands"
+	"github.com/htcondor/cedar/commands"
 )
 
 // The shared-port endpoint handshake.

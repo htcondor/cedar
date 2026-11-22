@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bbockelm/cedar/ccb"
-	"github.com/bbockelm/cedar/client"
-	"github.com/bbockelm/cedar/commands"
-	"github.com/bbockelm/cedar/security"
+	"github.com/htcondor/cedar/ccb"
+	"github.com/htcondor/cedar/client"
+	"github.com/htcondor/cedar/commands"
+	"github.com/htcondor/cedar/security"
 )
 
 // sslTestCerts holds a CA, a server certificate for "localhost" and a client

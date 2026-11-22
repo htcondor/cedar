@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/PelicanPlatform/classad/classad"
-	"github.com/bbockelm/cedar/commands"
+	"github.com/htcondor/cedar/commands"
 )
 
 // TestAuthCommandInClientAd tests that AuthCommand is included in client security ClassAd when set

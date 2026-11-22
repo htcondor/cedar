@@ -34,8 +34,8 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/bbockelm/cedar/addresses"
-	"github.com/bbockelm/cedar/message"
+	"github.com/htcondor/cedar/addresses"
+	"github.com/htcondor/cedar/message"
 )
 
 const (

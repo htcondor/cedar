@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/PelicanPlatform/classad/classad"
-	"github.com/bbockelm/cedar/stream"
+	"github.com/htcondor/cedar/stream"
 )
 
 // TestProxyModeReverseConnectsToOwnBroker checks that a request marked

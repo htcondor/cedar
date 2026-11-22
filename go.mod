@@ -1,4 +1,4 @@
-module github.com/bbockelm/cedar
+module github.com/htcondor/cedar
 
 go 1.26.0
 

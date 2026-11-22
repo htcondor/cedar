@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bbockelm/cedar/client"
-	"github.com/bbockelm/cedar/commands"
-	"github.com/bbockelm/cedar/security"
-	"github.com/bbockelm/cedar/server"
+	"github.com/htcondor/cedar/client"
+	"github.com/htcondor/cedar/commands"
+	"github.com/htcondor/cedar/security"
+	"github.com/htcondor/cedar/server"
 )
 
 // TestConcurrentServerHandshakes drives many concurrent authenticated+encrypted

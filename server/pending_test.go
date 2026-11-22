@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bbockelm/cedar/ccb"
-	"github.com/bbockelm/cedar/message"
-	"github.com/bbockelm/cedar/security"
-	"github.com/bbockelm/cedar/stream"
+	"github.com/htcondor/cedar/ccb"
+	"github.com/htcondor/cedar/message"
+	"github.com/htcondor/cedar/security"
+	"github.com/htcondor/cedar/stream"
 )
 
 // acceptPair returns a connected client conn and the accepted server conn.

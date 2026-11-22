@@ -8,7 +8,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/bbockelm/cedar/addresses"
+	"github.com/htcondor/cedar/addresses"
 )
 
 // isConnResetOrEOF reports whether err is the wire symptom of the peer dropping the

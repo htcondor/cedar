@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bbockelm/cedar/stream"
+	"github.com/htcondor/cedar/stream"
 )
 
 // writeUnreadableTLSCert writes a cert/key pair that is present and readable but

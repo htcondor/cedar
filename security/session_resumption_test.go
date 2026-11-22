@@ -20,8 +20,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bbockelm/cedar/commands"
-	"github.com/bbockelm/cedar/stream"
+	"github.com/htcondor/cedar/commands"
+	"github.com/htcondor/cedar/stream"
 )
 
 // TestSessionResumptionWithEncryption tests session resumption when encryption is enabled

@@ -12,11 +12,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/bbockelm/cedar/addresses"
-	"github.com/bbockelm/cedar/ccb"
-	"github.com/bbockelm/cedar/client/sharedport"
-	"github.com/bbockelm/cedar/security"
-	"github.com/bbockelm/cedar/stream"
+	"github.com/htcondor/cedar/addresses"
+	"github.com/htcondor/cedar/ccb"
+	"github.com/htcondor/cedar/client/sharedport"
+	"github.com/htcondor/cedar/security"
+	"github.com/htcondor/cedar/stream"
 )
 
 // HTCondorClient represents a client connection to an HTCondor daemon

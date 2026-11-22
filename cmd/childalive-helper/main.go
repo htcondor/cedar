@@ -7,9 +7,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/bbockelm/cedar/client/sharedport"
-	"github.com/bbockelm/cedar/commands"
-	"github.com/bbockelm/cedar/security"
+	"github.com/htcondor/cedar/client/sharedport"
+	"github.com/htcondor/cedar/commands"
+	"github.com/htcondor/cedar/security"
 )
 
 // writeResult writes the outcome to the requested path and logs to stderr on error.

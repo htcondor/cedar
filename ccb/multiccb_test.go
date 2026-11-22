@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bbockelm/cedar/addresses"
-	"github.com/bbockelm/cedar/security"
-	cedarserver "github.com/bbockelm/cedar/server"
-	"github.com/bbockelm/cedar/stream"
+	"github.com/htcondor/cedar/addresses"
+	"github.com/htcondor/cedar/security"
+	cedarserver "github.com/htcondor/cedar/server"
+	"github.com/htcondor/cedar/stream"
 )
 
 // plaintextSec returns an un-authenticated, un-encrypted security config so the

@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	cedarserver "github.com/bbockelm/cedar/server"
+	cedarserver "github.com/htcondor/cedar/server"
 
-	"github.com/bbockelm/cedar/security"
+	"github.com/htcondor/cedar/security"
 )
 
 // TestBrokerDialRecoversFromAStaleSession reproduces what an access point

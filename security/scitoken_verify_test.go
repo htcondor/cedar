@@ -19,8 +19,8 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"github.com/bbockelm/cedar/commands"
-	"github.com/bbockelm/cedar/stream"
+	"github.com/htcondor/cedar/commands"
+	"github.com/htcondor/cedar/stream"
 )
 
 // testIssuer is an https SciToken issuer: OIDC metadata and a JWKS holding

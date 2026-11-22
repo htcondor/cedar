@@ -5,7 +5,7 @@ import (
 	"net"
 	"testing"
 
-	"github.com/bbockelm/cedar/stream"
+	"github.com/htcondor/cedar/stream"
 
 	"github.com/PelicanPlatform/classad/classad"
 )

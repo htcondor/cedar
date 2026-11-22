@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bbockelm/cedar/security"
-	"github.com/bbockelm/cedar/stream"
+	"github.com/htcondor/cedar/security"
+	"github.com/htcondor/cedar/stream"
 )
 
 // poolUIDDomain is the pool's UID_DOMAIN, the domain an ALLOW_<PERM> rule is
