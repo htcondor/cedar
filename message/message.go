@@ -340,6 +340,14 @@ func (m *Message) GetString(ctx context.Context) (string, error) {
 			return "", err
 		}
 
+		// A negative length is malformed and cannot be left to ensureData:
+		// both of its comparisons are false for a negative need, so it returns
+		// nil without reading, and make([]byte, length) below then panicked
+		// with "makeslice: len out of range". GetBytes already rejects this.
+		if length < 0 {
+			return "", fmt.Errorf("negative string length %d", length)
+		}
+
 		if err := m.ensureData(ctx, int(length)); err != nil {
 			return "", err
 		}
@@ -412,6 +420,13 @@ func (m *Message) GetStringWithMaxSize(ctx context.Context, maxSize int) (string
 		length, err := m.GetInt32(ctx)
 		if err != nil {
 			return "", err
+		}
+
+		// Same malformed case as GetString. The clamp below is no guard: for a
+		// negative value bytesToRead > maxSize is false, so it stayed negative
+		// and reached make([]byte, bytesToRead).
+		if length < 0 {
+			return "", fmt.Errorf("negative string length %d", length)
 		}
 
 		// Check if length exceeds maxSize - if so, only read maxSize bytes
