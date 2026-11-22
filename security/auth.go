@@ -992,6 +992,28 @@ func (a *Authenticator) handleSessionResumption(ctx context.Context, sessionID s
 		return nil, fmt.Errorf("session %s resumed with unsupported crypto method %s", redactSessionID(sessionID), clientCrypto)
 	}
 
+	// Resuming proves possession of the session key: the AES-GCM AAD binds the
+	// handshake digest and the resume nonce, so a peer without the key cannot
+	// produce a readable frame. An entry with no key offers no such proof, and
+	// the restore below would hand its authenticated identity to anyone who
+	// learns or guesses the session id -- the id travels in cleartext on a
+	// session that negotiated no crypto, and GenerateSessionID is enumerable.
+	// Refuse it, as with a session keyed by a cipher we cannot read; the peer
+	// then falls back to a full handshake, which is where identity is proved.
+	if entry.KeyInfo() == nil {
+		if policy := entry.Policy(); policy != nil {
+			authed, _ := policy.EvaluateAttrBool("Authenticated")
+			user, _ := policy.EvaluateAttrString("User")
+			if authed && user != "" {
+				slog.Warn(fmt.Sprintf("🔐 SERVER: Session %s carries an authenticated identity but no session key; refusing to resume it without proof of possession", redactSessionID(sessionID)), "destination", "cedar")
+				if err := rejectSession(); err != nil {
+					return nil, err
+				}
+				return nil, fmt.Errorf("session %s has no session key; refusing to resume an authenticated session unproven", redactSessionID(sessionID))
+			}
+		}
+	}
+
 	slog.Info(fmt.Sprintf("🔐 SERVER: Found session %s, resuming...", redactSessionID(sessionID)), "destination", "cedar")
 
 	// Renew the session lease
