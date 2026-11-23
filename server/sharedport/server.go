@@ -260,6 +260,13 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	}()
 	defer func() { _ = ln.Close() }()
 
+	// Backoff for a listener that is still open but momentarily cannot produce
+	// a connection, as when the process is out of file descriptors.
+	const (
+		acceptRetryMin = 5 * time.Millisecond
+		acceptRetryMax = time.Second
+	)
+	var acceptDelay time.Duration
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -270,8 +277,33 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 				return ErrServerClosed
 			default:
 			}
-			return fmt.Errorf("sharedport: accept: %w", err)
+			// Only a closed listener is terminal. Returning on every error
+			// made a transient descriptor exhaustion (EMFILE/ENFILE)
+			// permanent: the router exited, the listener stayed bound so
+			// nothing else could take the port, and every shared-port id this
+			// process advertises became unreachable even once descriptors were
+			// free again. MaxPending does not prevent it -- the descriptor is
+			// spent by Accept, before the pending check below runs.
+			if errors.Is(err, net.ErrClosed) {
+				return fmt.Errorf("sharedport: accept: %w", err)
+			}
+			if acceptDelay == 0 {
+				acceptDelay = acceptRetryMin
+			} else if acceptDelay *= 2; acceptDelay > acceptRetryMax {
+				acceptDelay = acceptRetryMax
+			}
+			s.log.Error("shared-port router: accept failed; retrying",
+				"error", err, "retry_in", acceptDelay)
+			select {
+			case <-time.After(acceptDelay):
+			case <-ctx.Done():
+				return ErrServerClosed
+			case <-s.done:
+				return ErrServerClosed
+			}
+			continue
 		}
+		acceptDelay = 0
 		s.accepted.Add(1)
 
 		select {
