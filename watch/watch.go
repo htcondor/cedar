@@ -108,14 +108,21 @@ func EncodeRequest(adType, constraint string, cursor []byte) *classad.ClassAd {
 	return ad
 }
 
-// DecodeRequest reads a subscribe request ClassAd. A "" constraint means no
-// filter.
+// DecodeRequest reads a subscribe request ClassAd. An absent constraint
+// attribute yields a "" constraint, meaning no filter; a constraint attribute
+// that is present but does not evaluate to a string is an error rather than
+// the unfiltered firehose that silently dropping it would produce.
 func DecodeRequest(ad *classad.ClassAd) (adType, constraint string, cursor []byte, err error) {
 	adType, ok := ad.EvaluateAttrString(AttrAdType)
 	if !ok || adType == "" {
 		return "", "", nil, fmt.Errorf("watch: request missing %s", AttrAdType)
 	}
-	constraint, _ = ad.EvaluateAttrString(AttrConstraint)
+	if _, present := ad.Lookup(AttrConstraint); present {
+		constraint, ok = ad.EvaluateAttrString(AttrConstraint)
+		if !ok {
+			return "", "", nil, fmt.Errorf("watch: %s does not evaluate to a string", AttrConstraint)
+		}
+	}
 	s, _ := ad.EvaluateAttrString(AttrCursor)
 	cursor, err = decodeBytes(s)
 	if err != nil {
@@ -141,16 +148,24 @@ func EncodeHeader(kind Kind, key, cursor []byte) *classad.ClassAd {
 }
 
 // DecodeHeader reads an event-header ClassAd. A returned key/cursor is nil when
-// the corresponding attribute is absent.
+// the corresponding attribute is absent. A key attribute that is present but
+// does not evaluate to a string is an error: a Delete or Upsert with no key is
+// not an event a caller can act on.
 func DecodeHeader(ad *classad.ClassAd) (kind Kind, key, cursor []byte, err error) {
 	k, ok := ad.EvaluateAttrInt(AttrKind)
 	if !ok {
 		return 0, nil, nil, fmt.Errorf("watch: event missing %s", AttrKind)
 	}
-	if s, ok := ad.EvaluateAttrString(AttrKey); ok && s != "" {
-		key, err = decodeBytes(s)
-		if err != nil {
-			return 0, nil, nil, fmt.Errorf("watch: bad %s: %w", AttrKey, err)
+	if _, present := ad.Lookup(AttrKey); present {
+		s, ok := ad.EvaluateAttrString(AttrKey)
+		if !ok {
+			return 0, nil, nil, fmt.Errorf("watch: %s does not evaluate to a string", AttrKey)
+		}
+		if s != "" {
+			key, err = decodeBytes(s)
+			if err != nil {
+				return 0, nil, nil, fmt.Errorf("watch: bad %s: %w", AttrKey, err)
+			}
 		}
 	}
 	if s, ok := ad.EvaluateAttrString(AttrCursor); ok && s != "" {

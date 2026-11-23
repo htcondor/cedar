@@ -18,7 +18,7 @@ const (
 	FILETRANSFER_BASE         = 61000 // File transfer commands base
 	DCSHADOW_BASE             = 71000 // Shadow commands base
 	DCGRIDMANAGER_BASE        = 73000 // Grid manager commands base
-	CREDD_BASE                = 75000 // Credential daemon commands base
+	CREDD_BASE                = 81000 // Credential daemon commands base
 )
 
 // Scheduler Commands (SCHED_VERS + offset)
@@ -276,12 +276,13 @@ const (
 
 // Credential Daemon Commands
 const (
+	CREDD_STORE_CRED  = CREDD_BASE + 0   // Store credential
 	CREDD_GET_CRED    = CREDD_BASE + 1   // Get credential
-	CREDD_STORE_CRED  = CREDD_BASE + 2   // Store credential
-	CREDD_REMOVE_CRED = CREDD_BASE + 3   // Remove credential
-	CREDD_QUERY_CRED  = CREDD_BASE + 4   // Query credential
-	CREDD_REFRESH_ALL = CREDD_BASE + 10  // Refresh all credentials
-	CREDD_CHECK_CREDS = CREDD_BASE + 98  // Check credentials
+	CREDD_REMOVE_CRED = CREDD_BASE + 2   // Remove credential
+	CREDD_QUERY_CRED  = CREDD_BASE + 3   // Query credential
+	CREDD_GET_TOKEN   = CREDD_BASE + 4   // Get OAuth token
+	CREDD_REFRESH_ALL = CREDD_BASE + 20  // Refresh all credentials (unused)
+	CREDD_CHECK_CREDS = CREDD_BASE + 30  // Check whether OAuth tokens are stored
 	CREDD_GET_PASSWD  = CREDD_BASE + 99  // Get password (Win32 only)
 	CREDD_NOP         = CREDD_BASE + 100 // NOP (Win32 only)
 )

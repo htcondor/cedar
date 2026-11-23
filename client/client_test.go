@@ -195,16 +195,23 @@ func TestHTCondorClient_Close(t *testing.T) {
 			t.Fatalf("Connect failed: %v", err)
 		}
 
+		if !client.IsConnected() {
+			t.Fatal("Expected client to report connected before Close")
+		}
+
 		err = client.Close()
 		if err != nil {
 			t.Errorf("Close failed: %v", err)
 		}
 
-		// Note: The stream's IsConnected method only checks if conn != nil,
-		// but doesn't set conn to nil on close. This is consistent with the
-		// HTCondor implementation where the connection state is managed
-		// at the socket level, not the stream level.
-		// For this test, we just verify that Close() succeeds without error.
+		if client.IsConnected() {
+			t.Error("Expected client to report not connected after Close")
+		}
+
+		// Close is idempotent.
+		if err := client.Close(); err != nil {
+			t.Errorf("Second Close failed: %v", err)
+		}
 	})
 }
 

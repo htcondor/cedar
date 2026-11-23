@@ -447,3 +447,97 @@ func acceptWithTimeout(l *Listener, d time.Duration) (net.Conn, error) {
 		return nil, fmt.Errorf("Accept timed out after %v", d)
 	}
 }
+
+// TestAddHandlerRefusedAfterClose is the deterministic half of the
+// accept-vs-Close race: acceptLoop counts a handler only after AcceptUnix has
+// returned, so a connection can be accepted while Close is already waiting.
+// Registration must therefore be refused once Close has begun — otherwise the
+// counted handler starts after Close's Wait has returned (and sync.WaitGroup's
+// own rules are broken: an Add that begins while the counter is zero and a
+// Wait is in progress).
+func TestAddHandlerRefusedAfterClose(t *testing.T) {
+	socket := shortSocketPath(t)
+	l, err := Listen(socket, Options{Logf: t.Logf})
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+
+	if !l.addHandler() {
+		t.Fatal("addHandler refused a handler on a live listener")
+	}
+	l.handlers.Done()
+
+	if err := l.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	if l.addHandler() {
+		l.handlers.Done()
+		t.Error("addHandler accepted a handler after Close returned; " +
+			"that handler would run with nobody waiting for it")
+	}
+}
+
+// TestListenerCloseRacesAcceptedConnection hammers the real window: producers
+// keep connecting while Close runs, so some connection is accepted at about
+// the moment Close waits. No handler may call logf after Close has returned —
+// that is the "Log in goroutine after Test... has completed" panic this
+// listener's WaitGroup exists to prevent. Run with -race -count N.
+func TestListenerCloseRacesAcceptedConnection(t *testing.T) {
+	for i := 0; i < 20; i++ {
+		socket := shortSocketPath(t)
+
+		var closeReturned atomic.Bool
+		var lateLogs atomic.Int64
+		l, err := Listen(socket, Options{
+			Logf: func(string, ...any) {
+				if closeReturned.Load() {
+					lateLogs.Add(1)
+				}
+			},
+		})
+		if err != nil {
+			t.Fatalf("Listen: %v", err)
+		}
+
+		stop := make(chan struct{})
+		var producers sync.WaitGroup
+		for p := 0; p < 4; p++ {
+			producers.Add(1)
+			go func() {
+				defer producers.Done()
+				for {
+					select {
+					case <-stop:
+						return
+					default:
+					}
+					c, err := net.Dial("unix", socket)
+					if err != nil {
+						return
+					}
+					// A malformed handshake: the handler's error path is
+					// what reaches logf.
+					_, _ = c.Write([]byte("not a CEDAR frame"))
+					_ = c.Close()
+				}
+			}()
+		}
+
+		time.Sleep(2 * time.Millisecond)
+		if err := l.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+		closeReturned.Store(true)
+
+		close(stop)
+		producers.Wait()
+
+		// Give any goroutine Close failed to wait for a chance to log.
+		time.Sleep(5 * time.Millisecond)
+		if n := lateLogs.Load(); n != 0 {
+			t.Fatalf("iteration %d: %d handler log call(s) after Close returned; "+
+				"a handler was accepted but not accounted for in the WaitGroup", i, n)
+		}
+	}
+}

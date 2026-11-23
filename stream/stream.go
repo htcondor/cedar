@@ -33,6 +33,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"sync/atomic"
 	"time"
 )
 
@@ -103,6 +104,12 @@ type Stream struct {
 	// Timeout settings (matches HTCondor's Stream timeout behavior)
 	timeout            time.Duration // Socket timeout duration (0 = no timeout)
 	cryptoBeforeSecret bool          // Saved encryption state before sending/receiving secret
+
+	// closed records that Close() has run on this side. net.Conn provides no
+	// way to ask whether it is still open, so this is the only thing that makes
+	// IsConnected() report false after a close. It is atomic because Close may
+	// be called from a goroutine other than the one reading IsConnected.
+	closed atomic.Bool
 }
 
 // CEDAR protocol constants based on HTCondor's reli_sock.cpp
@@ -432,13 +439,23 @@ func (s *Stream) ReceiveFrameWithEnd(ctx context.Context) ([]byte, byte, error) 
 	return clearData, endFlag, nil
 }
 
-// IsConnected returns true if the underlying connection is still open
+// IsConnected reports whether this side of the stream is still usable: it has
+// a connection and Close() has not been called. It says nothing about whether
+// the peer is still reachable -- a peer-side drop is only discoverable by
+// doing I/O, and this method does none.
 func (s *Stream) IsConnected() bool {
-	return s.conn != nil
+	return s.conn != nil && !s.closed.Load()
 }
 
-// Close closes the underlying connection
+// Close closes the underlying connection. It is idempotent; a second call is a
+// no-op and returns nil.
 func (s *Stream) Close() error {
+	if s.closed.Swap(true) {
+		return nil
+	}
+	if s.conn == nil {
+		return nil
+	}
 	return s.conn.Close()
 }
 

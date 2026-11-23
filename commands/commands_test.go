@@ -105,3 +105,31 @@ func TestGetCommandsByType(t *testing.T) {
 		}
 	}
 }
+
+func TestCreddCommandConstants(t *testing.T) {
+	// Absolute wire values, per condor_commands.h in the C++ implementation.
+	// These are asserted as literals rather than as CREDD_BASE + offset so a
+	// wrong base cannot pass.
+	tests := []struct {
+		name string
+		got  int
+		want int
+	}{
+		{"CREDD_BASE", CREDD_BASE, 81000},
+		{"CREDD_STORE_CRED", CREDD_STORE_CRED, 81000},
+		{"CREDD_GET_CRED", CREDD_GET_CRED, 81001},
+		{"CREDD_REMOVE_CRED", CREDD_REMOVE_CRED, 81002},
+		{"CREDD_QUERY_CRED", CREDD_QUERY_CRED, 81003},
+		{"CREDD_GET_TOKEN", CREDD_GET_TOKEN, 81004},
+		{"CREDD_REFRESH_ALL", CREDD_REFRESH_ALL, 81020},
+		{"CREDD_CHECK_CREDS", CREDD_CHECK_CREDS, 81030},
+		{"CREDD_GET_PASSWD", CREDD_GET_PASSWD, 81099},
+		{"CREDD_NOP", CREDD_NOP, 81100},
+	}
+
+	for _, tt := range tests {
+		if tt.got != tt.want {
+			t.Errorf("Expected %s to be %d, got %d", tt.name, tt.want, tt.got)
+		}
+	}
+}

@@ -70,6 +70,12 @@ type Listener struct {
 	// test completes ("Log in goroutine after Test... has completed").
 	handlers sync.WaitGroup
 
+	// handlerMu guards closing, which marks the point after which no
+	// handler may be added to handlers. It makes registration and
+	// Close's Wait mutually exclusive: see addHandler.
+	handlerMu sync.Mutex
+	closing   bool
+
 	timeout time.Duration
 	logf    LogFunc
 }
@@ -226,9 +232,32 @@ func (l *Listener) acceptLoop() {
 		// Track the handler so Close can drain in-flight goroutines
 		// before returning. Add must happen on the parent goroutine —
 		// adding inside `handle` would race with Close's Wait.
-		l.handlers.Add(1)
+		if !l.addHandler() {
+			// Close has begun, so its Wait may already have returned;
+			// a handler started now would outlive Close. Drop this
+			// connection instead — a shutdown would have closed it
+			// anyway (see handle's l.closed case).
+			_ = c.Close()
+			return
+		}
 		go l.handle(c)
 	}
+}
+
+// addHandler counts one in-flight handler, reporting whether the caller may
+// start it. It returns false once Close has begun: after that point Close's
+// Wait may have returned already, and sync.WaitGroup forbids an Add that
+// starts while the counter is zero and a Wait is in progress. Because Close
+// sets closing under the same mutex before it waits, every handler that is
+// counted here is counted before that Wait begins.
+func (l *Listener) addHandler() bool {
+	l.handlerMu.Lock()
+	defer l.handlerMu.Unlock()
+	if l.closing {
+		return false
+	}
+	l.handlers.Add(1)
+	return true
 }
 
 // handle runs the fd-pass handshake on a single UDS connection.
@@ -357,7 +386,13 @@ func (l *Listener) terminalErr() error {
 // caller's about to tear down.
 func (l *Listener) Close() error {
 	l.closeOnce.Do(func() {
+		// Unblock parked handlers (handle selects on l.closed) before
+		// refusing new ones, so the Wait below cannot sit behind a
+		// handler waiting for a consumer that will never come.
 		close(l.closed)
+		l.handlerMu.Lock()
+		l.closing = true
+		l.handlerMu.Unlock()
 		_ = l.uln.Close()
 		// Only unlink the socket file when we own it (created via
 		// Listen). Listeners adopted via AdoptFD borrow the parent's
@@ -370,7 +405,9 @@ func (l *Listener) Close() error {
 	// Wait outside the Once: it's idempotent (Wait on a
 	// drained WaitGroup is a no-op) and we want every Close caller —
 	// including the second concurrent one racing the first through
-	// the Once — to block until handlers really are done.
+	// the Once — to block until handlers really are done. No handler
+	// can be added from here on: addHandler refuses once closing is
+	// set, which happened inside the Once above.
 	l.handlers.Wait()
 	return nil
 }
