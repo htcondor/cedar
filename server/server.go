@@ -372,7 +372,10 @@ func (s *Server) commandRefusal(realCmd int, peerAddr string, neg *security.Secu
 
 // commandLevelSatisfied reports whether a session with the given negotiated
 // properties meets realCmd's current security requirements (authentication and
-// encryption/integrity). Reads only set-once fields, so it takes no lock.
+// encryption/integrity). It takes no lock itself, but it calls the
+// application's SecurityConfigForCommand hook, which is free to call back into
+// the server (CommandPerms does this in several consumers), so it must not be
+// called with s.mu held.
 func (s *Server) commandLevelSatisfied(realCmd int, authenticated, encrypted bool) bool {
 	req := s.SecurityConfig
 	if s.SecurityConfigForCommand != nil {
@@ -441,28 +444,45 @@ func (s *Server) postAuthPolicy(authUser, peerAddr string, authenticated, encryp
 	if s.Authorizer == nil {
 		return fqu, nil
 	}
-	var valid []int
+	// Snapshot the candidates under the lock and release it before running any
+	// application callback, as authorized does. Both callbacks below
+	// (SecurityConfigForCommand, via commandLevelSatisfied, and Authorizer) are
+	// supplied by the embedding program and are documented to be free to call
+	// back into the server — CommandPerms in particular. s.mu is a
+	// sync.RWMutex, which is not reentrant: a callback re-entering RLock while
+	// a Handle is queued on the write lock would wedge both goroutines, and
+	// every later handshake behind them, permanently.
+	type candidate struct {
+		cmd   int
+		perms []string
+	}
 	s.mu.RLock()
+	candidates := make([]candidate, 0, len(s.handlers))
 	for cmd, h := range s.handlers {
 		if h.raw || len(h.perms) == 0 {
 			continue
 		}
+		candidates = append(candidates, candidate{cmd: cmd, perms: h.perms})
+	}
+	s.mu.RUnlock()
+
+	var valid []int
+	for _, c := range candidates {
 		// Only advertise a command the session could run right now: it must both
 		// clear the command's security level for this session AND be authorized.
 		// Advertising a command the session can't immediately use (e.g. an
 		// encryption-mandating command over a plaintext session) would be an
 		// overly-broad ValidCommands that the dispatch-time check then rejects.
-		if !s.commandLevelSatisfied(cmd, authenticated, encrypted) {
+		if !s.commandLevelSatisfied(c.cmd, authenticated, encrypted) {
 			continue
 		}
-		for _, perm := range h.perms {
+		for _, perm := range c.perms {
 			if s.Authorizer(perm, peerAddr, fqu) {
-				valid = append(valid, cmd)
+				valid = append(valid, c.cmd)
 				break
 			}
 		}
 	}
-	s.mu.RUnlock()
 	sort.Ints(valid)
 	return fqu, valid
 }
