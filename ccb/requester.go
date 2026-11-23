@@ -104,9 +104,11 @@ type SharedPortEndpointConfig struct {
 
 	// SocketDir is the directory the shared_port daemon watches for endpoint
 	// sockets (its DAEMON_SOCKET_DIR). The endpoint socket is created here so
-	// the daemon can forward connections to it. If empty, the socket is created
-	// in a temporary directory -- only useful when the shared_port daemon shares
-	// that filesystem location, so prefer setting it explicitly.
+	// the daemon can forward connections to it. Required: the advertised
+	// address is "<host:port?sock=NAME>", and the daemon resolves NAME inside
+	// its own socket directory, so a socket anywhere else is unreachable and
+	// the target's reverse connection never arrives. There is no default
+	// worth guessing -- only the caller knows where that daemon looks.
 	SocketDir string
 
 	// SocketName is the shared-port id (the sock= value) to register. If empty,
@@ -705,6 +707,16 @@ func newReverseListener(opts DialOptions) (net.Listener, string, error) {
 		return ln, addr, nil
 	}
 	if cfg := opts.SharedPortEndpoint; cfg != nil {
+		// Without a socket directory the endpoint socket was bound at a
+		// bare relative path, landing in whatever directory the process
+		// happens to be in. That is not a working fallback: the sinful we
+		// advertise sends the target to the shared_port daemon, which
+		// looks the sock= name up in its own DAEMON_SOCKET_DIR, so the
+		// socket is unreachable there and the dial dies as a reverse-
+		// connect timeout with nothing to point at. Say so instead.
+		if cfg.SocketDir == "" {
+			return nil, "", errors.New("ccb: shared-port endpoint needs SocketDir (the shared_port daemon's DAEMON_SOCKET_DIR)")
+		}
 		name := cfg.SocketName
 		if name == "" {
 			id, err := GenerateConnectID()
@@ -713,10 +725,7 @@ func newReverseListener(opts DialOptions) (net.Listener, string, error) {
 			}
 			name = "ccb-" + id[:16] // anonymous endpoint name
 		}
-		sockPath := name
-		if cfg.SocketDir != "" {
-			sockPath = filepath.Join(cfg.SocketDir, name)
-		}
+		sockPath := filepath.Join(cfg.SocketDir, name)
 		ln, err := sharedport.Listen(sockPath, sharedport.Options{})
 		if err != nil {
 			return nil, "", fmt.Errorf("ccb: creating shared-port endpoint: %w", err)
