@@ -173,10 +173,11 @@ type Server struct {
 	// it — for every registered authenticated command's levels — to compute the
 	// session's ValidCommands after authentication, so a peer can reuse the
 	// session for any command it is authorized for. It also authorizes every
-	// command before dispatch; on a full handshake that happens before the
-	// handshake's reply, so a refused command is answered DENIED and its
-	// session is not cached. Leaving it nil advertises only the negotiated
-	// command (no authorization table applied).
+	// command before dispatch, except a command registered with no levels,
+	// which carries no authorization requirement; on a full handshake that
+	// happens before the handshake's reply, so a refused command is answered
+	// DENIED and its session is not cached. Leaving it nil advertises only the
+	// negotiated command (no authorization table applied).
 	Authorizer func(perm, peerAddr, user string) bool
 
 	// FQUMapper, if set, maps an authenticated identity to the fully-qualified
@@ -318,10 +319,12 @@ func (s *Server) CommandPerms(command int) []string {
 //     authorization levels (Negotiation.AuthorizationLimits), one of realCmd's
 //     registered levels must be ALLOW or within those limits, whether or not
 //     an Authorizer is set.
-//   - Authorization: when an Authorizer gates the server, realCmd must appear in
-//     the session's post-auth ValidCommands set. Without an Authorizer,
-//     authorization is not enforced here and reuse is bounded by the
-//     security-level and bounding-set checks alone.
+//   - Authorization: when an Authorizer gates the server, the identity must
+//     satisfy one of realCmd's registered authorization levels. A command
+//     registered with no levels has none to satisfy and is not gated here (see
+//     Handle); access to it is bounded by the two checks above. Without an
+//     Authorizer, authorization is not enforced here and reuse is bounded by
+//     the security-level and bounding-set checks alone.
 func (s *Server) sessionSatisfies(realCmd int, peerAddr string, neg *security.SecurityNegotiation) error {
 	if neg == nil {
 		return fmt.Errorf("no negotiated session")
@@ -337,7 +340,8 @@ func (s *Server) sessionSatisfies(realCmd int, peerAddr string, neg *security.Se
 	// DaemonCore (daemon_command.cpp): a level it excludes is refused whatever
 	// the identity is allowed. It is carried in the session, so it also holds
 	// for a resumed or kept-alive session.
-	if perms := s.CommandPerms(realCmd); !security.AuthorizationLimitsPermit(neg.AuthorizationLimits, perms) {
+	perms := s.CommandPerms(realCmd)
+	if !security.AuthorizationLimitsPermit(neg.AuthorizationLimits, perms) {
 		return fmt.Errorf("authorization levels %v are outside the session's authorization limits %v", perms, neg.AuthorizationLimits)
 	}
 	// Authorization, also re-evaluated against the CURRENT Authorizer rather than
@@ -346,7 +350,7 @@ func (s *Server) sessionSatisfies(realCmd int, peerAddr string, neg *security.Se
 	if s.Authorizer != nil {
 		user := authorizationUser(neg.User, neg.Authentication)
 		if !s.authorized(realCmd, peerAddr, user) {
-			return fmt.Errorf("identity %q is not authorized for this command under current policy", user)
+			return fmt.Errorf("identity %q does not satisfy any of the command's authorization levels %v", user, perms)
 		}
 	}
 	return nil
@@ -391,9 +395,16 @@ func (s *Server) commandLevelSatisfied(realCmd int, authenticated, encrypted boo
 }
 
 // authorized reports whether user may run realCmd under the current Authorizer
-// and the command's registered authorization levels.
+// and the command's registered authorization levels. A command registered with
+// no levels carries no authorization requirement (Handle: "applies no
+// authorization table"), so there is nothing for the Authorizer to decide and
+// it is authorized.
 func (s *Server) authorized(realCmd int, peerAddr, user string) bool {
-	for _, perm := range s.CommandPerms(realCmd) {
+	perms := s.CommandPerms(realCmd)
+	if len(perms) == 0 {
+		return true
+	}
+	for _, perm := range perms {
 		if s.Authorizer(perm, peerAddr, user) {
 			return true
 		}
