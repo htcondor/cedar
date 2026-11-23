@@ -229,8 +229,16 @@ func (s *Stream) grabFrame(n int) []byte {
 
 // sendMessageWithEnd sends a message with specified end flag
 func (s *Stream) sendMessageWithEnd(ctx context.Context, data []byte, end byte) error {
-	if len(data) > MaxMessageSize {
-		return fmt.Errorf("message too large: %d bytes (max %d)", len(data), MaxMessageSize)
+	// Bound the ON-WIRE length, not the plaintext. The frame header carries
+	// the post-encryption size, and that is the number every receiver checks
+	// against MaxMessageSize -- ReceiveFrame below, and HTCondor's
+	// ReliSock::rcv_packet. AES-GCM adds its 16-byte tag, plus a 16-byte IV on
+	// the first frame of a stream, so capping the plaintext here let an
+	// encrypted maximum-size frame go out at 1048608 bytes against a 1048576
+	// cap, and the peer killed the frame as oversized. The plaintext a frame
+	// can carry is correspondingly smaller once encryption is on.
+	if onWire := s.calculateEncryptedSize(len(data)); onWire > MaxMessageSize {
+		return fmt.Errorf("message too large: %d bytes on the wire (max %d)", onWire, MaxMessageSize)
 	}
 
 	var frame []byte
