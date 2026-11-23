@@ -345,6 +345,15 @@ func (s *Stream) ReceiveFrame(ctx context.Context) ([]byte, error) {
 		if s.gcm != nil {
 			return nil, fmt.Errorf("zero-length frame on encrypted stream")
 		}
+		// Track header for AAD digest calculation, exactly as
+		// ReceiveFrameWithEnd does. The send path digests the header of a
+		// zero-length frame too, so skipping it here leaves this side's
+		// handshake digest short of the peer's and the first encrypted frame
+		// of the session fails to authenticate.
+		if s.recvDigest != nil && s.finalRecvDigest == nil {
+			s.recvDigest.Write(header)
+			s.recvDigestWritten = true
+		}
 		return []byte{}, nil
 	}
 
