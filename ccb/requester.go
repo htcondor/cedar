@@ -543,6 +543,27 @@ func dialBrokerAuthenticated(ctx context.Context, brokerAddr, clientName string,
 // resumption error is wrapped with %w so security.IsSessionResumptionError
 // still recognises it through the chain.
 func dialBrokerAuthOnce(ctx context.Context, brokerAddr, clientName string, sec *security.SecurityConfig, command int, dialer brokerDial) (*stream.Stream, *security.SecurityNegotiation, error) {
+	// A delegated credential is the caller's, and SecurityConfig says it is
+	// the only credential the connection it was built for may present. That
+	// connection is the one to the TARGET. The broker is a relay on the way
+	// there: it is named by the target's own advertised sinful rather than by
+	// configuration, there is no allow-list of brokers, and CCB_REQUEST is
+	// served at READ, so a broker that should never have seen the caller's
+	// credential is handed it and the leg succeeds quietly. On SCITOKENS that
+	// is the whole bearer token, which the broker can then replay as the user.
+	//
+	// Refuse instead of guessing. Presenting this host's own credential to the
+	// broker would be the right answer, but the config carries no second
+	// credential to present and substituting one is exactly what the flag
+	// forbids. Checked before the dial so no connection is opened, and the
+	// error is not a resumption error, so dialBrokerAuthenticated does not
+	// retry it.
+	if sec != nil && sec.DelegatedCredential {
+		return nil, nil, &security.DelegatedCredentialError{
+			Reason: fmt.Sprintf("ccb: a delegated credential belongs to the caller, not to this host, so it cannot be presented to broker %s", brokerAddr),
+		}
+	}
+
 	s, err := dialBrokerWith(ctx, brokerAddr, clientName, dialer)
 	if err != nil {
 		return nil, nil, err
