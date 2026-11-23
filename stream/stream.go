@@ -121,6 +121,14 @@ const (
 	// Maximum message size from HTCondor (1MB)
 	MaxMessageSize = 1024 * 1024
 
+	// MaxTotalMessageSize bounds one logical message reassembled from several
+	// frames. MaxMessageSize caps a single frame, but a peer may send an
+	// unlimited run of partial frames (end flag 0) and never set the end flag,
+	// so without a cumulative bound the reassembly buffer grows until the
+	// process dies. Sixteen full frames is far above anything HTCondor sends
+	// as one message and still bounds what a hostile peer can make us hold.
+	MaxTotalMessageSize = 16 * MaxMessageSize
+
 	// Frame size threshold - send frame when message reaches this size
 	DefaultFrameThreshold = 4096 // 4KB default threshold
 
@@ -336,6 +344,15 @@ func (s *Stream) ReceiveFrame(ctx context.Context) ([]byte, error) {
 		// See ReceiveFrameWithEnd: unverifiable on an encrypted stream.
 		if s.gcm != nil {
 			return nil, fmt.Errorf("zero-length frame on encrypted stream")
+		}
+		// Track header for AAD digest calculation, exactly as
+		// ReceiveFrameWithEnd does. The send path digests the header of a
+		// zero-length frame too, so skipping it here leaves this side's
+		// handshake digest short of the peer's and the first encrypted frame
+		// of the session fails to authenticate.
+		if s.recvDigest != nil && s.finalRecvDigest == nil {
+			s.recvDigest.Write(header)
+			s.recvDigestWritten = true
 		}
 		return []byte{}, nil
 	}
@@ -621,23 +638,34 @@ func (s *Stream) StartMessageRead(ctx context.Context) error {
 	return nil
 }
 
-// readNextFrame reads the next frame and appends to receive buffer
+// readNextFrame reads frames until the end of the current message, appending
+// each frame's data to the receive buffer.
+//
+// This iterates rather than recursing: one stack frame per partial frame meant
+// a peer that never set the end flag drove the goroutine stack to the runtime's
+// "stack exceeds" fatal error, which no caller can recover from. The reassembled
+// total is also capped at MaxTotalMessageSize so the same peer cannot grow the
+// buffer without bound instead.
 func (s *Stream) readNextFrame(ctx context.Context) error {
-	frameData, endFlag, err := s.ReceiveFrameWithEnd(ctx)
-	if err != nil {
-		return err
+	for {
+		frameData, endFlag, err := s.ReceiveFrameWithEnd(ctx)
+		if err != nil {
+			return err
+		}
+
+		if len(s.receiveBuffer)+len(frameData) > MaxTotalMessageSize {
+			return fmt.Errorf("message too large: reassembly exceeds %d bytes", MaxTotalMessageSize)
+		}
+
+		// Append frame data to receive buffer
+		s.receiveBuffer = append(s.receiveBuffer, frameData...)
+		s.totalMsgBytes = len(s.receiveBuffer)
+
+		// If this is the final frame, the message is complete
+		if endFlag != EndFlagPartial {
+			return nil
+		}
 	}
-
-	// Append frame data to receive buffer
-	s.receiveBuffer = append(s.receiveBuffer, frameData...)
-	s.totalMsgBytes = len(s.receiveBuffer)
-
-	// If this is not the final frame, read more frames
-	if endFlag == EndFlagPartial {
-		return s.readNextFrame(ctx) // Recursively read until complete message
-	}
-
-	return nil
 }
 
 // ReceiveCompleteMessage receives a complete message, reading multiple frames if necessary
@@ -651,7 +679,11 @@ func (s *Stream) ReceiveCompleteMessage(ctx context.Context) ([]byte, error) {
 			return nil, err
 		}
 
-		// Append this frame's data to the complete message
+		// Append this frame's data to the complete message, bounding what a
+		// peer that never sets the end flag can make us accumulate.
+		if len(completeMessage)+len(frameData) > MaxTotalMessageSize {
+			return nil, fmt.Errorf("message too large: reassembly exceeds %d bytes", MaxTotalMessageSize)
+		}
 		completeMessage = append(completeMessage, frameData...)
 
 		// Check if message is complete
@@ -1228,23 +1260,30 @@ func (s *Stream) WriteFrame(ctx context.Context, data []byte, isEOM bool) error 
 // SOCKET OPERATION APIS
 //
 
-// SetTimeout sets the socket timeout duration
+// SetTimeout arms a deadline on the stream's connection.
 // Based on HTCondor's Stream::timeout() from stream.cpp
-// A timeout of 0 means no timeout (blocking indefinitely)
+// A timeout of 0 clears the deadline (blocking indefinitely).
+//
+// The deadline is a single absolute instant measured from this call, not a
+// per-operation timeout: a sequence of operations shares it, and anything
+// still outstanding when it passes fails. Re-arm it per operation if that is
+// what you need.
+//
+// This deadlines whatever net.Conn the stream holds. It used to apply only to
+// a *net.TCPConn and return nil for anything else, so on a TLS, Unix-socket or
+// otherwise wrapped connection it reported success while arming nothing, and
+// callers had to reach past it to conn.SetReadDeadline themselves.
 func (s *Stream) SetTimeout(duration time.Duration) error {
 	s.timeout = duration
 
-	// Apply timeout to the underlying TCP connection if available
-	if tcpConn, ok := s.conn.(*net.TCPConn); ok {
-		if duration > 0 {
-			deadline := time.Now().Add(duration)
-			return tcpConn.SetDeadline(deadline)
-		} else {
-			// Clear deadline
-			return tcpConn.SetDeadline(time.Time{})
-		}
+	if s.conn == nil {
+		return fmt.Errorf("cannot set timeout: stream has no connection")
 	}
-	return nil
+	if duration > 0 {
+		return s.conn.SetDeadline(time.Now().Add(duration))
+	}
+	// Clear deadline
+	return s.conn.SetDeadline(time.Time{})
 }
 
 // GetTimeout returns the current socket timeout duration
@@ -1415,6 +1454,13 @@ func (s *Stream) GetFile(ctx context.Context, filename string) (int64, error) {
 	}
 	fileSize := int64(binary.BigEndian.Uint64(sizeData))
 
+	// A size above 2^63 arrives here negative. The receive loop below would
+	// simply not run, leaving an empty file and a success return, so refuse it
+	// before creating anything.
+	if fileSize < 0 {
+		return 0, fmt.Errorf("invalid file size: peer declared %d bytes", uint64(fileSize))
+	}
+
 	// Create the output file
 	file, err := os.Create(filename)
 	if err != nil {
@@ -1428,6 +1474,15 @@ func (s *Stream) GetFile(ctx context.Context, filename string) (int64, error) {
 		chunk, err := s.ReceiveFrame(ctx)
 		if err != nil {
 			return totalReceived, fmt.Errorf("failed to receive file chunk: %w", err)
+		}
+
+		// Write no more than the sender declared. Nothing ties a frame's
+		// length to the declared total, so without this clamp a peer that
+		// declares a small file and then sends larger frames writes as much
+		// to disk as it cares to send. Matches HTCondor's get_file(), which
+		// reads MIN(buf_sz, bytes_to_receive - total) per iteration.
+		if remaining := fileSize - totalReceived; int64(len(chunk)) > remaining {
+			chunk = chunk[:remaining]
 		}
 
 		n, err := file.Write(chunk)
