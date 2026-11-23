@@ -1447,6 +1447,13 @@ func (s *Stream) GetFile(ctx context.Context, filename string) (int64, error) {
 	}
 	fileSize := int64(binary.BigEndian.Uint64(sizeData))
 
+	// A size above 2^63 arrives here negative. The receive loop below would
+	// simply not run, leaving an empty file and a success return, so refuse it
+	// before creating anything.
+	if fileSize < 0 {
+		return 0, fmt.Errorf("invalid file size: peer declared %d bytes", uint64(fileSize))
+	}
+
 	// Create the output file
 	file, err := os.Create(filename)
 	if err != nil {
@@ -1460,6 +1467,15 @@ func (s *Stream) GetFile(ctx context.Context, filename string) (int64, error) {
 		chunk, err := s.ReceiveFrame(ctx)
 		if err != nil {
 			return totalReceived, fmt.Errorf("failed to receive file chunk: %w", err)
+		}
+
+		// Write no more than the sender declared. Nothing ties a frame's
+		// length to the declared total, so without this clamp a peer that
+		// declares a small file and then sends larger frames writes as much
+		// to disk as it cares to send. Matches HTCondor's get_file(), which
+		// reads MIN(buf_sz, bytes_to_receive - total) per iteration.
+		if remaining := fileSize - totalReceived; int64(len(chunk)) > remaining {
+			chunk = chunk[:remaining]
 		}
 
 		n, err := file.Write(chunk)
