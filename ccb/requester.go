@@ -104,9 +104,11 @@ type SharedPortEndpointConfig struct {
 
 	// SocketDir is the directory the shared_port daemon watches for endpoint
 	// sockets (its DAEMON_SOCKET_DIR). The endpoint socket is created here so
-	// the daemon can forward connections to it. If empty, the socket is created
-	// in a temporary directory -- only useful when the shared_port daemon shares
-	// that filesystem location, so prefer setting it explicitly.
+	// the daemon can forward connections to it. Required: the advertised
+	// address is "<host:port?sock=NAME>", and the daemon resolves NAME inside
+	// its own socket directory, so a socket anywhere else is unreachable and
+	// the target's reverse connection never arrives. There is no default
+	// worth guessing -- only the caller knows where that daemon looks.
 	SocketDir string
 
 	// SocketName is the shared-port id (the sock= value) to register. If empty,
@@ -541,6 +543,27 @@ func dialBrokerAuthenticated(ctx context.Context, brokerAddr, clientName string,
 // resumption error is wrapped with %w so security.IsSessionResumptionError
 // still recognises it through the chain.
 func dialBrokerAuthOnce(ctx context.Context, brokerAddr, clientName string, sec *security.SecurityConfig, command int, dialer brokerDial) (*stream.Stream, *security.SecurityNegotiation, error) {
+	// A delegated credential is the caller's, and SecurityConfig says it is
+	// the only credential the connection it was built for may present. That
+	// connection is the one to the TARGET. The broker is a relay on the way
+	// there: it is named by the target's own advertised sinful rather than by
+	// configuration, there is no allow-list of brokers, and CCB_REQUEST is
+	// served at READ, so a broker that should never have seen the caller's
+	// credential is handed it and the leg succeeds quietly. On SCITOKENS that
+	// is the whole bearer token, which the broker can then replay as the user.
+	//
+	// Refuse instead of guessing. Presenting this host's own credential to the
+	// broker would be the right answer, but the config carries no second
+	// credential to present and substituting one is exactly what the flag
+	// forbids. Checked before the dial so no connection is opened, and the
+	// error is not a resumption error, so dialBrokerAuthenticated does not
+	// retry it.
+	if sec != nil && sec.DelegatedCredential {
+		return nil, nil, &security.DelegatedCredentialError{
+			Reason: fmt.Sprintf("ccb: a delegated credential belongs to the caller, not to this host, so it cannot be presented to broker %s", brokerAddr),
+		}
+	}
+
 	s, err := dialBrokerWith(ctx, brokerAddr, clientName, dialer)
 	if err != nil {
 		return nil, nil, err
@@ -550,9 +573,10 @@ func dialBrokerAuthOnce(ctx context.Context, brokerAddr, clientName string, sec 
 	//
 	// What arrives here is the caller's config for the TARGET --
 	// client.Connect hands c.config.Security straight to ccb.Dial -- so
-	// it carries that target's identity. Two fields decide which session
-	// this handshake offers, and both have to be re-aimed or the broker
-	// is offered a session that belongs to somebody else:
+	// it carries that target's identity. Three fields decide who this
+	// handshake is aimed at, and all three have to be re-aimed or the
+	// broker is offered a session -- or asked for a certificate -- that
+	// belongs to somebody else:
 	//
 	//   PeerName is what ClientHandshake keys the session cache on, in
 	//   preference to the stream's peer address. Left as the target, every
@@ -566,10 +590,20 @@ func dialBrokerAuthOnce(ctx context.Context, brokerAddr, clientName string, sec 
 	//   skipping negotiation. On this path it is the target's, typically a
 	//   schedd-minted claim; offering it to a broker asks the broker to
 	//   resume a session it never issued.
+	//
+	//   ServerName is the name SSL verifies the peer certificate
+	//   against, and an explicit one beats the name the handshake would
+	//   otherwise derive from the stream's peer address. Left as the
+	//   target, the broker's certificate is checked against the target's
+	//   hostname and the dial fails with "certificate is valid for
+	//   <broker>, not <target>". Clearing it hands the derivation back to
+	//   the SSL handshake, which takes the name from the peer address --
+	//   brokerAddr, set by dialBrokerWith.
 	cfg := *sec
 	cfg.Command = command
 	cfg.PeerName = brokerAddr
 	cfg.SessionID = ""
+	cfg.ServerName = ""
 	auth := security.NewAuthenticator(&cfg, s)
 	neg, err := auth.ClientHandshake(ctx)
 	if err != nil {
@@ -694,6 +728,16 @@ func newReverseListener(opts DialOptions) (net.Listener, string, error) {
 		return ln, addr, nil
 	}
 	if cfg := opts.SharedPortEndpoint; cfg != nil {
+		// Without a socket directory the endpoint socket was bound at a
+		// bare relative path, landing in whatever directory the process
+		// happens to be in. That is not a working fallback: the sinful we
+		// advertise sends the target to the shared_port daemon, which
+		// looks the sock= name up in its own DAEMON_SOCKET_DIR, so the
+		// socket is unreachable there and the dial dies as a reverse-
+		// connect timeout with nothing to point at. Say so instead.
+		if cfg.SocketDir == "" {
+			return nil, "", errors.New("ccb: shared-port endpoint needs SocketDir (the shared_port daemon's DAEMON_SOCKET_DIR)")
+		}
 		name := cfg.SocketName
 		if name == "" {
 			id, err := GenerateConnectID()
@@ -702,10 +746,7 @@ func newReverseListener(opts DialOptions) (net.Listener, string, error) {
 			}
 			name = "ccb-" + id[:16] // anonymous endpoint name
 		}
-		sockPath := name
-		if cfg.SocketDir != "" {
-			sockPath = filepath.Join(cfg.SocketDir, name)
-		}
+		sockPath := filepath.Join(cfg.SocketDir, name)
 		ln, err := sharedport.Listen(sockPath, sharedport.Options{})
 		if err != nil {
 			return nil, "", fmt.Errorf("ccb: creating shared-port endpoint: %w", err)
