@@ -402,6 +402,15 @@ func proxyRequestOnStream(ctx context.Context, brokerConn net.Conn, brokerStream
 	return brokerConn, nil
 }
 
+// reverseConnectHelloTimeout bounds how long one accepted connection may take
+// to present its reverse-connect hello. The hello is the first thing the target
+// writes once connected, so this is generous; it exists because the accept loop
+// is serial. Without it a connection that opens and then says nothing holds the
+// loop for the rest of the dial budget (DialOptions.Timeout, 30s by default)
+// and the target's real connection is never read. A var only so tests can
+// shorten the wait.
+var reverseConnectHelloTimeout = 10 * time.Second
+
 // acceptReversed accepts connections on ln until one presents the matching
 // reverse-connect hello, then returns it.
 func acceptReversed(ctx context.Context, ln net.Listener, connectID string) (net.Conn, error) {
@@ -413,6 +422,10 @@ func acceptReversed(ctx context.Context, ln net.Listener, connectID string) (net
 		if err != nil {
 			return nil, fmt.Errorf("ccb: accept reversed connection: %w", err)
 		}
+		// Deadline set on the conn rather than via Stream.SetTimeout, which
+		// only reaches a *net.TCPConn and would silently do nothing for a
+		// shared-port or tunneled listener.
+		_ = conn.SetReadDeadline(time.Now().Add(reverseConnectHelloTimeout))
 		s := stream.NewStream(conn)
 		helloAd, err := readReverseConnect(ctx, s)
 		if err != nil {
@@ -422,6 +435,12 @@ func acceptReversed(ctx context.Context, ln net.Listener, connectID string) (net
 		if got := AdString(helloAd, AttrClaimID); got != connectID {
 			_ = conn.Close()
 			continue
+		}
+		// The caller runs a full CEDAR handshake on this conn, so the hello
+		// deadline must not outlive the hello.
+		if err := conn.SetReadDeadline(time.Time{}); err != nil {
+			_ = conn.Close()
+			return nil, fmt.Errorf("ccb: clearing reverse-connect read deadline: %w", err)
 		}
 		return conn, nil
 	}
