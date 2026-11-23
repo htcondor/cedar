@@ -121,6 +121,14 @@ const (
 	// Maximum message size from HTCondor (1MB)
 	MaxMessageSize = 1024 * 1024
 
+	// MaxTotalMessageSize bounds one logical message reassembled from several
+	// frames. MaxMessageSize caps a single frame, but a peer may send an
+	// unlimited run of partial frames (end flag 0) and never set the end flag,
+	// so without a cumulative bound the reassembly buffer grows until the
+	// process dies. Sixteen full frames is far above anything HTCondor sends
+	// as one message and still bounds what a hostile peer can make us hold.
+	MaxTotalMessageSize = 16 * MaxMessageSize
+
 	// Frame size threshold - send frame when message reaches this size
 	DefaultFrameThreshold = 4096 // 4KB default threshold
 
@@ -621,23 +629,34 @@ func (s *Stream) StartMessageRead(ctx context.Context) error {
 	return nil
 }
 
-// readNextFrame reads the next frame and appends to receive buffer
+// readNextFrame reads frames until the end of the current message, appending
+// each frame's data to the receive buffer.
+//
+// This iterates rather than recursing: one stack frame per partial frame meant
+// a peer that never set the end flag drove the goroutine stack to the runtime's
+// "stack exceeds" fatal error, which no caller can recover from. The reassembled
+// total is also capped at MaxTotalMessageSize so the same peer cannot grow the
+// buffer without bound instead.
 func (s *Stream) readNextFrame(ctx context.Context) error {
-	frameData, endFlag, err := s.ReceiveFrameWithEnd(ctx)
-	if err != nil {
-		return err
+	for {
+		frameData, endFlag, err := s.ReceiveFrameWithEnd(ctx)
+		if err != nil {
+			return err
+		}
+
+		if len(s.receiveBuffer)+len(frameData) > MaxTotalMessageSize {
+			return fmt.Errorf("message too large: reassembly exceeds %d bytes", MaxTotalMessageSize)
+		}
+
+		// Append frame data to receive buffer
+		s.receiveBuffer = append(s.receiveBuffer, frameData...)
+		s.totalMsgBytes = len(s.receiveBuffer)
+
+		// If this is the final frame, the message is complete
+		if endFlag != EndFlagPartial {
+			return nil
+		}
 	}
-
-	// Append frame data to receive buffer
-	s.receiveBuffer = append(s.receiveBuffer, frameData...)
-	s.totalMsgBytes = len(s.receiveBuffer)
-
-	// If this is not the final frame, read more frames
-	if endFlag == EndFlagPartial {
-		return s.readNextFrame(ctx) // Recursively read until complete message
-	}
-
-	return nil
 }
 
 // ReceiveCompleteMessage receives a complete message, reading multiple frames if necessary
@@ -651,7 +670,11 @@ func (s *Stream) ReceiveCompleteMessage(ctx context.Context) ([]byte, error) {
 			return nil, err
 		}
 
-		// Append this frame's data to the complete message
+		// Append this frame's data to the complete message, bounding what a
+		// peer that never sets the end flag can make us accumulate.
+		if len(completeMessage)+len(frameData) > MaxTotalMessageSize {
+			return nil, fmt.Errorf("message too large: reassembly exceeds %d bytes", MaxTotalMessageSize)
+		}
 		completeMessage = append(completeMessage, frameData...)
 
 		// Check if message is complete
