@@ -3331,6 +3331,11 @@ func (a *Authenticator) PerformTokenAuthenticationDemo(method AuthMethod, negoti
 
 // exchangeKey performs the key exchange step following HTCondor's Authentication::exchangeKey
 // For modern HTCondor with AESGCM crypto, the server always sends an empty key
+// maxExchangedKeyLen bounds the wrapped session key a peer may declare in the
+// post-authentication key exchange. Session keys are a few dozen bytes; this
+// leaves room for any wrapping while keeping a malformed length out of make().
+const maxExchangedKeyLen = 1 << 20
+
 func (a *Authenticator) exchangeKey(ctx context.Context, negotiation *SecurityNegotiation) error {
 	slog.Info("🔑 Starting key exchange...", "destination", "cedar")
 
@@ -3376,6 +3381,16 @@ func (a *Authenticator) exchangeKey(ctx context.Context, negotiation *SecurityNe
 
 			slog.Info(fmt.Sprintf("🔑 CLIENT: Receiving key - length: %d, protocol: %d, duration: %d, inputLen: %d",
 				keyLength, protocol, duration, inputLen), "destination", "cedar")
+
+			// inputLen is whatever the peer put on the wire, and the key
+			// exchange runs before the stream is encrypted, so it is also
+			// whatever an on-path attacker put there. make() panics with
+			// "makeslice: len out of range" on a negative length, and that
+			// panic is unrecoverable on the client path, so bound it here
+			// rather than at the read.
+			if inputLen < 0 || inputLen > maxExchangedKeyLen {
+				return fmt.Errorf("invalid encrypted key length %d", inputLen)
+			}
 
 			// Read encrypted key data
 			encryptedKey := make([]byte, inputLen)
