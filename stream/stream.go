@@ -1260,23 +1260,30 @@ func (s *Stream) WriteFrame(ctx context.Context, data []byte, isEOM bool) error 
 // SOCKET OPERATION APIS
 //
 
-// SetTimeout sets the socket timeout duration
+// SetTimeout arms a deadline on the stream's connection.
 // Based on HTCondor's Stream::timeout() from stream.cpp
-// A timeout of 0 means no timeout (blocking indefinitely)
+// A timeout of 0 clears the deadline (blocking indefinitely).
+//
+// The deadline is a single absolute instant measured from this call, not a
+// per-operation timeout: a sequence of operations shares it, and anything
+// still outstanding when it passes fails. Re-arm it per operation if that is
+// what you need.
+//
+// This deadlines whatever net.Conn the stream holds. It used to apply only to
+// a *net.TCPConn and return nil for anything else, so on a TLS, Unix-socket or
+// otherwise wrapped connection it reported success while arming nothing, and
+// callers had to reach past it to conn.SetReadDeadline themselves.
 func (s *Stream) SetTimeout(duration time.Duration) error {
 	s.timeout = duration
 
-	// Apply timeout to the underlying TCP connection if available
-	if tcpConn, ok := s.conn.(*net.TCPConn); ok {
-		if duration > 0 {
-			deadline := time.Now().Add(duration)
-			return tcpConn.SetDeadline(deadline)
-		} else {
-			// Clear deadline
-			return tcpConn.SetDeadline(time.Time{})
-		}
+	if s.conn == nil {
+		return fmt.Errorf("cannot set timeout: stream has no connection")
 	}
-	return nil
+	if duration > 0 {
+		return s.conn.SetDeadline(time.Now().Add(duration))
+	}
+	// Clear deadline
+	return s.conn.SetDeadline(time.Time{})
 }
 
 // GetTimeout returns the current socket timeout duration
