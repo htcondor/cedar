@@ -82,7 +82,7 @@ func paramByteIsSafe(c byte) bool {
 // An address with no such parameter, or no query string at all, comes back
 // unchanged.
 func WithoutParam(addr, key string) string {
-	open, body, closeB, query, ok := splitSinful(addr)
+	open, body, closeB, trailer, query, ok := splitSinful(addr)
 	if !ok {
 		return addr
 	}
@@ -94,7 +94,7 @@ func WithoutParam(addr, key string) string {
 		}
 		kept = append(kept, pair)
 	}
-	return joinSinful(open, body, closeB, kept)
+	return joinSinful(open, body, closeB, trailer, kept)
 }
 
 // WithParam returns addr with key set to value, replacing any existing one.
@@ -103,49 +103,56 @@ func WithoutParam(addr, key string) string {
 // caller spelled it, since a caller adding a parameter this package does not
 // know about has to be able to choose its name.
 func WithParam(addr, key, value string) string {
-	open, body, closeB, query, ok := splitSinful(addr)
+	open, body, closeB, trailer, query, ok := splitSinful(addr)
+	pair := key + "=" + EncodeParamValue(value)
 	if !ok {
-		// No query string yet: append one.
-		trimmed := strings.TrimSpace(addr)
-		o, c := "", ""
-		if strings.HasPrefix(trimmed, "<") && strings.HasSuffix(trimmed, ">") {
-			o, c = "<", ">"
-			trimmed = trimmed[1 : len(trimmed)-1]
-		}
-		return o + trimmed + "?" + key + "=" + EncodeParamValue(value) + c
+		// No query string yet: append one. splitSinful has already told us
+		// where the brackets are, so the new pair lands inside them.
+		return joinSinful(open, body, closeB, trailer, []string{pair})
 	}
 	want := canonicalSinfulKey(key)
 	kept := make([]string, 0, 8)
-	for _, pair := range splitParamPairs(query) {
-		if canonicalSinfulKey(decodeParamKey(pairKey(pair))) == want {
+	for _, p := range splitParamPairs(query) {
+		if canonicalSinfulKey(decodeParamKey(pairKey(p))) == want {
 			continue
 		}
-		kept = append(kept, pair)
+		kept = append(kept, p)
 	}
-	kept = append(kept, key+"="+EncodeParamValue(value))
-	return joinSinful(open, body, closeB, kept)
+	kept = append(kept, pair)
+	return joinSinful(open, body, closeB, trailer, kept)
 }
 
-// splitSinful breaks an address into its brackets, primary address and query
-// string. ok is false when there is no query string to edit.
-func splitSinful(addr string) (open, primary, closeB, query string, ok bool) {
+// splitSinful breaks an address into its brackets, primary address, trailing
+// remainder and query string. ok is false when there is no query string to
+// edit.
+//
+// The bracketed body ends at the first '>', as ParseSinful and
+// ParseHTCondorAddress read it; anything after that -- an address file's
+// "$CondorVersion:" line, a peer's malformed advertisement -- is the trailer,
+// which joinSinful puts back verbatim. Keying on the last byte instead would
+// miss the brackets entirely and leave the edited parameter outside them,
+// where no parser looks.
+func splitSinful(addr string) (open, primary, closeB, trailer, query string, ok bool) {
 	body := strings.TrimSpace(addr)
-	if strings.HasPrefix(body, "<") && strings.HasSuffix(body, ">") {
-		open, closeB = "<", ">"
-		body = body[1 : len(body)-1]
+	if strings.HasPrefix(body, "<") {
+		if j := strings.IndexByte(body, '>'); j >= 0 {
+			open, closeB = "<", ">"
+			trailer = body[j+1:]
+			body = body[1:j]
+		}
 	}
 	i := strings.IndexByte(body, '?')
 	if i < 0 {
-		return open, body, closeB, "", false
+		return open, body, closeB, trailer, "", false
 	}
-	return open, body[:i], closeB, body[i+1:], true
+	return open, body[:i], closeB, trailer, body[i+1:], true
 }
 
-func joinSinful(open, primary, closeB string, pairs []string) string {
+func joinSinful(open, primary, closeB, trailer string, pairs []string) string {
 	if len(pairs) == 0 {
-		return open + primary + closeB
+		return open + primary + closeB + trailer
 	}
-	return open + primary + "?" + strings.Join(pairs, "&") + closeB
+	return open + primary + "?" + strings.Join(pairs, "&") + closeB + trailer
 }
 
 func splitParamPairs(query string) []string {

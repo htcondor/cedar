@@ -137,3 +137,69 @@ func TestWithParamCannotInjectAParameter(t *testing.T) {
 		t.Errorf("alias = %q, want %q: the whole value as one parameter", parsed.Alias, want)
 	}
 }
+
+// An address with bytes after the closing '>' -- an address file's version
+// line, or a peer's malformed advertisement -- must still be edited inside
+// the brackets, where a parser will see the parameter. ParseSinful and
+// ParseHTCondorAddress both end the body at the first '>'; the editors have
+// to read it the same way, and the trailing bytes come back untouched.
+func TestEditsLandInsideTheBracketsWithATrailer(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{
+			name: "WithParam replaces an existing pair",
+			in:   "<1.2.3.4:9618?sock=x&alias=h>\n$CondorVersion: 23.0.0$",
+			want: "<1.2.3.4:9618?alias=h&sock=y>\n$CondorVersion: 23.0.0$",
+		},
+		{
+			name: "WithParam adds to an address with no query",
+			in:   "<10.0.0.1:9618>X",
+			want: "<10.0.0.1:9618?sock=y>X",
+		},
+		{
+			name: "no trailer is still the ordinary case",
+			in:   "<1.2.3.4:9618?alias=h>",
+			want: "<1.2.3.4:9618?alias=h&sock=y>",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := WithParam(tc.in, "sock", "y"); got != tc.want {
+				t.Errorf("WithParam(%q, \"sock\", \"y\") = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+
+	// The point of putting it inside: the edit has to survive a reparse.
+	const in = "<1.2.3.4:9618?sock=x&alias=h>\n$CondorVersion: 23.0.0$"
+	got := WithParam(in, "sock", "y")
+	parsed, err := ParseSinful(got)
+	if err != nil {
+		t.Fatalf("ParseSinful(%q): %v", got, err)
+	}
+	if parsed.SharedPortID != "y" {
+		t.Errorf("SharedPortID = %q, want %q: the edit was written outside the brackets", parsed.SharedPortID, "y")
+	}
+	if parsed.Alias != "h" {
+		t.Errorf("Alias = %q, want %q: an untouched parameter was lost", parsed.Alias, "h")
+	}
+
+	// WithoutParam reads the body the same way and keeps the trailer.
+	const withoutWant = "<1.2.3.4:9618?sock=x>\n$CondorVersion: 23.0.0$"
+	if got := WithoutParam(in, "alias"); got != withoutWant {
+		t.Errorf("WithoutParam(%q, \"alias\") = %q, want %q", in, got, withoutWant)
+	}
+}
+
+// The privnet rewrite in golang-htcondor carries an SSL alias onto a peer's
+// advertised private address, which is url-decoded and may therefore contain
+// a '>'. Losing the alias there sends an SSL dial to check the certificate
+// against a bare IP.
+func TestWithParamKeepsAnAliasOnADecodedPrivateAddress(t *testing.T) {
+	got := WithParam("<10.0.0.1:9618>X", "alias", "ep1.example.org")
+	parsed, err := ParseSinful(got)
+	if err != nil {
+		t.Fatalf("ParseSinful(%q): %v", got, err)
+	}
+	if parsed.Alias != "ep1.example.org" {
+		t.Errorf("Alias = %q, want %q (from %q)", parsed.Alias, "ep1.example.org", got)
+	}
+}
