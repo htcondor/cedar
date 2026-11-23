@@ -393,7 +393,7 @@ func (s *Server) Register(id string) (*Route, error) {
 		return nil, errors.New("sharedport: server is not listening yet; call Listen or Serve before Register")
 	}
 	if _, exists := s.routes[id]; exists {
-		return nil, fmt.Errorf("%w: %s", ErrDuplicateID, id)
+		return nil, fmt.Errorf("%w: %s", ErrDuplicateID, redactID(id))
 	}
 	r := &Route{
 		srv:    s,
@@ -446,7 +446,7 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 	if route == nil {
 		s.unknownID.Add(1)
 		s.log.Debug("shared-port request for an unregistered id",
-			"peer", peer, "sock", id, "client", clientName)
+			"peer", peer, "sock", redactID(id), "client", clientName)
 		_ = conn.Close()
 		return
 	}
@@ -469,11 +469,11 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 		if s.afterDeliver != nil {
 			s.afterDeliver()
 		}
-		s.log.Debug("shared-port connection queued", "peer", peer, "sock", id, "client", clientName)
+		s.log.Debug("shared-port connection queued", "peer", peer, "sock", redactID(id), "client", clientName)
 		return
 	}
 	s.undelivered.Add(1)
-	s.log.Warn("shared-port connection went unaccepted", "peer", peer, "sock", id, "client", clientName)
+	s.log.Warn("shared-port connection went unaccepted", "peer", peer, "sock", redactID(id), "client", clientName)
 	_ = conn.Close()
 }
 
@@ -526,6 +526,10 @@ func readConnectRequest(ctx context.Context, conn net.Conn) (id, clientName stri
 	return id, clientName, nil
 }
 
+// generatedIDPrefix marks an id this package minted, as opposed to one the
+// caller named.
+const generatedIDPrefix = "cedar-"
+
 // randomID generates an unguessable shared-port id made only of characters
 // IsValidSharedPortID accepts.
 func randomID() (string, error) {
@@ -533,5 +537,32 @@ func randomID() (string, error) {
 	if _, err := rand.Read(buf[:]); err != nil {
 		return "", fmt.Errorf("sharedport: generating id: %w", err)
 	}
-	return "cedar-" + hex.EncodeToString(buf[:]), nil
+	return generatedIDPrefix + hex.EncodeToString(buf[:]), nil
+}
+
+// redactID returns a short, log-safe rendering of a shared-port id, mirroring
+// security.redactSessionID. An id is a capability: the router performs no
+// authentication, so whoever knows an id is handed the connections addressed
+// to it, and HTCondor's daemon logs are world-readable on stock installs (mode
+// 0644). The first 8 characters (32 bits for a hex id) are kept so the log
+// lines for one connection can still be correlated, and the rest is dropped
+// behind an ASCII "...". For an id we generated the kept characters are
+// counted past the constant "cedar-" prefix, which carries no entropy.
+// Returns "<empty>" for the empty string so a missing id stays distinguishable
+// from a present one.
+//
+// Every site in this package that renders an id into a log line or an error
+// goes through this helper; errors count, because a caller logs them.
+func redactID(id string) string {
+	if id == "" {
+		return "<empty>"
+	}
+	keep := 8
+	if strings.HasPrefix(id, generatedIDPrefix) {
+		keep += len(generatedIDPrefix)
+	}
+	if len(id) <= keep {
+		return id + "..."
+	}
+	return id[:keep] + "..."
 }
