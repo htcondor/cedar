@@ -312,77 +312,18 @@ func (s *Stream) SendPartialMessage(ctx context.Context, data []byte) error {
 	return s.sendMessageWithEnd(ctx, data, EndFlagPartial) // More frames follow
 }
 
-// ReceiveFrame receives and deframes a message from the stream
+// ReceiveFrame receives and deframes a message from the stream, discarding the
+// end-of-message flag.
 // Uses HTCondor CEDAR protocol format:
 // [1 byte: end flag] [4 bytes: message length in network order] [message data]
+//
+// It is ReceiveFrameWithEnd with the end flag dropped. The two were separate
+// copies of the same forty lines and drifted twice -- the zero-length frame's
+// handshake digest, then the condition gating decryption -- so the body lives
+// in one place now.
 func (s *Stream) ReceiveFrame(ctx context.Context) ([]byte, error) {
-	// Read HTCondor-style header (5 bytes)
-	header := make([]byte, NormalHeaderSize)
-	if err := s.readWithContext(ctx, header); err != nil {
-		return nil, fmt.Errorf("failed to read frame header: %w", err)
-	}
-	// A full header means the peer answered; a later failure is no longer
-	// "the daemon never responded".
-	s.receivedFrame = true
-
-	// Extract end flag and message length
-	endFlag := header[0]
-	messageLength := binary.BigEndian.Uint32(header[1:5])
-
-	// Validate message size
-	if messageLength > MaxMessageSize {
-		return nil, fmt.Errorf("message too large: %d bytes (max %d)", messageLength, MaxMessageSize)
-	}
-
-	// Validate end flag (HTCondor uses values 0-10)
-	if endFlag > 10 {
-		return nil, fmt.Errorf("invalid end flag: %d", endFlag)
-	}
-
-	// Handle zero-length messages
-	if messageLength == 0 {
-		// See ReceiveFrameWithEnd: unverifiable on an encrypted stream.
-		if s.gcm != nil {
-			return nil, fmt.Errorf("zero-length frame on encrypted stream")
-		}
-		// Track header for AAD digest calculation, exactly as
-		// ReceiveFrameWithEnd does. The send path digests the header of a
-		// zero-length frame too, so skipping it here leaves this side's
-		// handshake digest short of the peer's and the first encrypted frame
-		// of the session fails to authenticate.
-		if s.recvDigest != nil && s.finalRecvDigest == nil {
-			s.recvDigest.Write(header)
-			s.recvDigestWritten = true
-		}
-		return []byte{}, nil
-	}
-
-	// Read message data
-	messageData := make([]byte, messageLength)
-	if err := s.readWithContext(ctx, messageData); err != nil {
-		return nil, fmt.Errorf("failed to read message data: %w", err)
-	}
-
-	// Decrypt data if encryption is enabled using AAD
-	var clearData []byte
-	if s.gcm != nil && s.encrypted {
-		decryptedData, err := s.decryptDataWithAAD(messageData, header)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decrypt message: %w", err)
-		}
-		clearData = decryptedData
-	} else {
-		clearData = messageData
-	}
-
-	// Track cleartext data for AAD digest calculation AFTER decryption
-	if s.recvDigest != nil && s.finalRecvDigest == nil {
-		s.recvDigest.Write(header)
-		s.recvDigest.Write(clearData)
-		s.recvDigestWritten = true
-	}
-
-	return clearData, nil
+	data, _, err := s.ReceiveFrameWithEnd(ctx)
+	return data, err
 }
 
 // ReceiveFrameWithEnd receives a message and returns both data and end flag
@@ -434,9 +375,12 @@ func (s *Stream) ReceiveFrameWithEnd(ctx context.Context) ([]byte, byte, error) 
 		return nil, 0, fmt.Errorf("failed to read message data: %w", err)
 	}
 
-	// Decrypt data if encryption is enabled using AAD
+	// Decrypt data if encryption is enabled using AAD. The condition mirrors
+	// sendMessageWithEnd's, so a frame the sender wrote in the clear with a key
+	// installed (SetEncrypted(false)) is read back in the clear; decryptDataWithAAD
+	// re-checks the same state, so this is the readable guard, not the load-bearing one.
 	var clearData []byte
-	if s.gcm != nil && len(messageData) > 0 {
+	if s.gcm != nil && s.encrypted {
 		decryptedData, err := s.decryptDataWithAAD(messageData, header)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to decrypt message: %w", err)
