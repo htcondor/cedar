@@ -3,6 +3,8 @@ package watch
 import (
 	"bytes"
 	"testing"
+
+	"github.com/PelicanPlatform/classad/classad"
 )
 
 func TestRequestRoundTrip(t *testing.T) {
@@ -63,5 +65,59 @@ func TestHeaderRoundTrip(t *testing.T) {
 		if tc.kind.HasAd() != (tc.kind == KindUpsert) {
 			t.Errorf("HasAd wrong for %v", tc.kind)
 		}
+	}
+}
+
+// TestDecodeRequestNonStringConstraint checks that a constraint attribute of
+// the wrong type is rejected. Silently dropping it would turn a filtered
+// subscription into an unfiltered one, which no caller can detect.
+func TestDecodeRequestNonStringConstraint(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		insert func(*classad.ClassAd)
+	}{
+		{"int", func(ad *classad.ClassAd) { ad.InsertAttr(AttrConstraint, 42) }},
+		{"bool", func(ad *classad.ClassAd) { ad.InsertAttrBool(AttrConstraint, true) }},
+		{"undefined", func(ad *classad.ClassAd) {
+			expr, err := classad.ParseExpr("NoSuchAttribute")
+			if err != nil {
+				t.Fatalf("ParseExpr: %v", err)
+			}
+			ad.InsertExpr(AttrConstraint, expr)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ad := classad.New()
+			ad.InsertAttrString(AttrAdType, "StartdAd")
+			tc.insert(ad)
+
+			_, constraint, _, err := DecodeRequest(ad)
+			if err == nil {
+				t.Fatalf("DecodeRequest accepted a non-string %s, returning constraint %q",
+					AttrConstraint, constraint)
+			}
+		})
+	}
+}
+
+// TestDecodeRequestAbsentConstraint pins the documented meaning of an absent
+// constraint: no filter, no error. The fix for a non-string constraint must
+// not catch this case.
+func TestDecodeRequestAbsentConstraint(t *testing.T) {
+	ad := classad.New()
+	ad.InsertAttrString(AttrAdType, "StartdAd")
+
+	adType, constraint, cursor, err := DecodeRequest(ad)
+	if err != nil {
+		t.Fatalf("DecodeRequest: %v", err)
+	}
+	if adType != "StartdAd" {
+		t.Errorf("adType: got %q want %q", adType, "StartdAd")
+	}
+	if constraint != "" {
+		t.Errorf("constraint: got %q want \"\"", constraint)
+	}
+	if cursor != nil {
+		t.Errorf("cursor: got %x want nil", cursor)
 	}
 }
