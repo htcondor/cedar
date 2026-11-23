@@ -148,9 +148,10 @@ func EncodeHeader(kind Kind, key, cursor []byte) *classad.ClassAd {
 }
 
 // DecodeHeader reads an event-header ClassAd. A returned key/cursor is nil when
-// the corresponding attribute is absent. A key attribute that is present but
-// does not evaluate to a string is an error: a Delete or Upsert with no key is
-// not an event a caller can act on.
+// the corresponding attribute is absent. A key or cursor attribute that is
+// present but does not evaluate to a string is an error: a Delete or Upsert
+// with no key is not an event a caller can act on, and a dropped cursor turns
+// a resume into a replay from the beginning of the stream.
 func DecodeHeader(ad *classad.ClassAd) (kind Kind, key, cursor []byte, err error) {
 	k, ok := ad.EvaluateAttrInt(AttrKind)
 	if !ok {
@@ -168,10 +169,16 @@ func DecodeHeader(ad *classad.ClassAd) (kind Kind, key, cursor []byte, err error
 			}
 		}
 	}
-	if s, ok := ad.EvaluateAttrString(AttrCursor); ok && s != "" {
-		cursor, err = decodeBytes(s)
-		if err != nil {
-			return 0, nil, nil, fmt.Errorf("watch: bad %s: %w", AttrCursor, err)
+	if _, present := ad.Lookup(AttrCursor); present {
+		s, ok := ad.EvaluateAttrString(AttrCursor)
+		if !ok {
+			return 0, nil, nil, fmt.Errorf("watch: %s does not evaluate to a string", AttrCursor)
+		}
+		if s != "" {
+			cursor, err = decodeBytes(s)
+			if err != nil {
+				return 0, nil, nil, fmt.Errorf("watch: bad %s: %w", AttrCursor, err)
+			}
 		}
 	}
 	return Kind(k), key, cursor, nil

@@ -177,3 +177,68 @@ func TestDecodeHeaderAbsentKey(t *testing.T) {
 		}
 	}
 }
+
+// A cursor attribute that is present but not a string must be an error. It was
+// silently discarded, which is worse than a dropped key: a nil cursor means
+// "start from the beginning", so a subscriber resuming a stream got a full
+// replay instead of the events it had not seen, with nothing to indicate why.
+func TestDecodeHeaderNonStringCursor(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		insert func(*classad.ClassAd)
+	}{
+		{"int", func(ad *classad.ClassAd) { ad.InsertAttr(AttrCursor, 42) }},
+		{"bool", func(ad *classad.ClassAd) { ad.InsertAttrBool(AttrCursor, true) }},
+		{"undefined", func(ad *classad.ClassAd) {
+			expr, err := classad.ParseExpr("NoSuchAttribute")
+			if err != nil {
+				t.Fatalf("ParseExpr: %v", err)
+			}
+			ad.InsertExpr(AttrCursor, expr)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ad := classad.New()
+			ad.InsertAttr(AttrKind, int64(KindSynced))
+			tc.insert(ad)
+
+			_, _, cursor, err := DecodeHeader(ad)
+			if err == nil {
+				t.Fatalf("DecodeHeader accepted a non-string %s, returning cursor %q",
+					AttrCursor, cursor)
+			}
+		})
+	}
+}
+
+// An absent cursor keeps its documented meaning: nil, no error. A subscriber
+// starting fresh sends no cursor, so this must not become an error.
+func TestDecodeHeaderAbsentCursor(t *testing.T) {
+	ad := classad.New()
+	ad.InsertAttr(AttrKind, int64(KindSynced))
+
+	_, _, cursor, err := DecodeHeader(ad)
+	if err != nil {
+		t.Fatalf("DecodeHeader with no cursor: %v", err)
+	}
+	if cursor != nil {
+		t.Errorf("cursor = %q, want nil for an absent attribute", cursor)
+	}
+}
+
+// A well-formed cursor still round-trips, so the type check cannot be
+// satisfied by rejecting cursors outright.
+func TestDecodeHeaderValidCursorRoundTrips(t *testing.T) {
+	want := []byte{0xde, 0xad, 0xbe, 0xef}
+	ad := classad.New()
+	ad.InsertAttr(AttrKind, int64(KindSynced))
+	ad.InsertAttrString(AttrCursor, encodeBytes(want))
+
+	_, _, cursor, err := DecodeHeader(ad)
+	if err != nil {
+		t.Fatalf("DecodeHeader: %v", err)
+	}
+	if string(cursor) != string(want) {
+		t.Errorf("cursor = %x, want %x", cursor, want)
+	}
+}
