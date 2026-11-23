@@ -148,16 +148,24 @@ func EncodeHeader(kind Kind, key, cursor []byte) *classad.ClassAd {
 }
 
 // DecodeHeader reads an event-header ClassAd. A returned key/cursor is nil when
-// the corresponding attribute is absent.
+// the corresponding attribute is absent. A key attribute that is present but
+// does not evaluate to a string is an error: a Delete or Upsert with no key is
+// not an event a caller can act on.
 func DecodeHeader(ad *classad.ClassAd) (kind Kind, key, cursor []byte, err error) {
 	k, ok := ad.EvaluateAttrInt(AttrKind)
 	if !ok {
 		return 0, nil, nil, fmt.Errorf("watch: event missing %s", AttrKind)
 	}
-	if s, ok := ad.EvaluateAttrString(AttrKey); ok && s != "" {
-		key, err = decodeBytes(s)
-		if err != nil {
-			return 0, nil, nil, fmt.Errorf("watch: bad %s: %w", AttrKey, err)
+	if _, present := ad.Lookup(AttrKey); present {
+		s, ok := ad.EvaluateAttrString(AttrKey)
+		if !ok {
+			return 0, nil, nil, fmt.Errorf("watch: %s does not evaluate to a string", AttrKey)
+		}
+		if s != "" {
+			key, err = decodeBytes(s)
+			if err != nil {
+				return 0, nil, nil, fmt.Errorf("watch: bad %s: %w", AttrKey, err)
+			}
 		}
 	}
 	if s, ok := ad.EvaluateAttrString(AttrCursor); ok && s != "" {

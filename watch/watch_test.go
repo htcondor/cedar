@@ -121,3 +121,59 @@ func TestDecodeRequestAbsentConstraint(t *testing.T) {
 		t.Errorf("cursor: got %x want nil", cursor)
 	}
 }
+
+// TestDecodeHeaderNonStringKey checks that a key attribute of the wrong type
+// is rejected rather than yielding a keyed event with a nil key and no error.
+func TestDecodeHeaderNonStringKey(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		insert func(*classad.ClassAd)
+	}{
+		{"int", func(ad *classad.ClassAd) { ad.InsertAttr(AttrKey, 42) }},
+		{"bool", func(ad *classad.ClassAd) { ad.InsertAttrBool(AttrKey, true) }},
+		{"undefined", func(ad *classad.ClassAd) {
+			expr, err := classad.ParseExpr("NoSuchAttribute")
+			if err != nil {
+				t.Fatalf("ParseExpr: %v", err)
+			}
+			ad.InsertExpr(AttrKey, expr)
+		}},
+	} {
+		for _, kind := range []Kind{KindUpsert, KindDelete} {
+			t.Run(tc.name+"_"+kind.String(), func(t *testing.T) {
+				ad := classad.New()
+				ad.InsertAttr(AttrKind, int64(kind))
+				tc.insert(ad)
+
+				_, key, _, err := DecodeHeader(ad)
+				if err == nil {
+					t.Fatalf("DecodeHeader accepted a non-string %s, returning key %q",
+						AttrKey, key)
+				}
+			})
+		}
+	}
+}
+
+// TestDecodeHeaderAbsentKey pins the documented meaning of an absent key: nil,
+// no error, as the non-keyed event kinds rely on.
+func TestDecodeHeaderAbsentKey(t *testing.T) {
+	for _, kind := range []Kind{KindReset, KindSynced, KindResync, KindGoingAway} {
+		ad := classad.New()
+		ad.InsertAttr(AttrKind, int64(kind))
+
+		gotKind, key, cursor, err := DecodeHeader(ad)
+		if err != nil {
+			t.Fatalf("DecodeHeader(%v): %v", kind, err)
+		}
+		if gotKind != kind {
+			t.Errorf("kind: got %v want %v", gotKind, kind)
+		}
+		if key != nil {
+			t.Errorf("key for %v: got %q want nil", kind, key)
+		}
+		if cursor != nil {
+			t.Errorf("cursor for %v: got %x want nil", kind, cursor)
+		}
+	}
+}
