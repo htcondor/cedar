@@ -508,7 +508,12 @@ type SecurityConfig struct {
 	// process uses for its own identity.
 	SecurityTag string
 
-	// Session cache (optional, if provided will be used instead of global cache)
+	// Session cache (optional, if provided will be used instead of global
+	// cache) -- on both sides of the handshake, for storing a negotiated
+	// session as well as resuming one. The exception is a session inherited
+	// from condor_master or minted for a child process: those live only in
+	// the global cache, and a server resumes them from there whatever cache
+	// it is configured with.
 	SessionCache *SessionCache
 
 	// SessionID, if set, forces the client handshake to resume this exact
@@ -926,13 +931,17 @@ func (a *Authenticator) handleSessionResumption(ctx context.Context, sessionID s
 	}
 
 	// Look up the session. When a custom cache is set but the session is not
-	// there, fall back to the global cache: freshly handshake-negotiated
-	// server sessions are stored there (see storeSession), so a server with a
-	// custom cache must still resume them.
+	// there, fall back to the global cache for an inherited session only:
+	// sessions handed down by condor_master (registerInheritedSessions) and
+	// those minted for a child (MintInheritableSession) land in the global
+	// cache and nowhere else, so a server with a custom cache would otherwise
+	// refuse its own family. A session this process negotiated is in the cache
+	// it was negotiated under (see storeSession), and resuming one from
+	// another server's cache is exactly the isolation the custom cache buys.
 	entry, ok := cache.LookupNonExpired(sessionID)
 	if !ok {
 		if global := GetSessionCache(); global != cache {
-			if e, found := global.LookupNonExpired(sessionID); found {
+			if e, found := global.LookupNonExpired(sessionID); found && e.IsInherited() {
 				entry, ok, cache = e, true, global
 			}
 		}
@@ -1791,9 +1800,17 @@ func (a *Authenticator) withinAuthorizationLimits(negotiation *SecurityNegotiati
 	return kept
 }
 
-// storeSession stores the negotiated session in the global session cache
+// storeSession stores the negotiated session in the session cache the
+// connection is configured with, falling back to the global one, as every
+// other path that stores or resumes a session does: SecurityConfig.SessionCache
+// is documented as a replacement for the global cache, and a server given an
+// isolated cache must not have its sessions resumable by every other server in
+// the process.
 func (a *Authenticator) storeSession(negotiation *SecurityNegotiation, sessionID string, durationSecs, leaseSecs int) {
-	cache := GetSessionCache()
+	cache := a.config.SessionCache
+	if cache == nil {
+		cache = GetSessionCache()
+	}
 
 	// Create key info from the shared secret
 	var keyInfo *KeyInfo
