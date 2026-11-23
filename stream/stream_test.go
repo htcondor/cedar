@@ -582,3 +582,52 @@ func TestMultiFrameMessages(t *testing.T) {
 		}
 	})
 }
+
+// TestIsConnectedAfterClose covers the local half of the connection
+// predicate: Close() on this side must make IsConnected() report false.
+// Detecting a peer-side drop is out of scope -- that needs I/O.
+func TestIsConnectedAfterClose(t *testing.T) {
+	// A real TCP conn, not net.Pipe: net.Pipe's own Close is already
+	// idempotent, which would make the second-Close assertion below vacuous.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to listen: %v", err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	go func() {
+		conn, err := listener.Accept()
+		if err == nil {
+			_ = conn.Close()
+		}
+	}()
+
+	conn, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatalf("Failed to dial: %v", err)
+	}
+
+	s := NewStream(conn)
+
+	if !s.IsConnected() {
+		t.Fatal("Expected a fresh stream to report connected")
+	}
+
+	if err = s.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	if s.IsConnected() {
+		t.Error("Expected a closed stream to report not connected")
+	}
+
+	// Close is idempotent: a second call is a no-op returning nil, not the
+	// "use of closed network connection" error the conn would give.
+	if err = s.Close(); err != nil {
+		t.Errorf("Second Close returned %v, want nil", err)
+	}
+
+	if s.IsConnected() {
+		t.Error("Expected a closed stream to still report not connected")
+	}
+}
