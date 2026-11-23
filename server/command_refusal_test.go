@@ -14,6 +14,12 @@ import (
 // unregisteredCmd is a command no test server registers.
 const unregisteredCmd = 81999
 
+// claimToBeSessions is the session cache every newClaimToBeServer is
+// configured with, and the one sessionCachedFor inspects. The servers share
+// it because each test's identity is unique (see uniqueUser), so a session
+// found in it belongs to the test that looked.
+var claimToBeSessions = security.NewSessionCache()
+
 // newClaimToBeServer returns a server that requires CLAIMTOBE and encryption
 // and whose Authorizer allows every authenticated identity at every level. It
 // serves the commands of handleEveryLevel.
@@ -25,7 +31,7 @@ func newClaimToBeServer(ran chan<- limitsDispatch) *Server {
 		Integrity:      security.SecurityRequired,
 		CryptoMethods:  []security.CryptoMethod{security.CryptoAES},
 		UIDDomain:      "pool",
-		SessionCache:   security.NewSessionCache(),
+		SessionCache:   claimToBeSessions,
 	})
 	srv.Authorizer = func(_, _, user string) bool { return user != UnauthenticatedFQU }
 	handleEveryLevel(srv, ran)
@@ -55,9 +61,10 @@ func uniqueUser(t *testing.T) string {
 }
 
 // sessionCachedFor reports whether the server's session cache holds a session
-// for user. A full handshake caches its session in the global cache.
+// for user. A full handshake caches its session in the cache the server is
+// configured with, not the process-global one.
 func sessionCachedFor(user string) bool {
-	for _, e := range security.GetSessionCache().Snapshot() {
+	for _, e := range claimToBeSessions.Snapshot() {
 		if p := e.Policy(); p != nil {
 			if u, ok := p.EvaluateAttrString("User"); ok && u == user {
 				return true

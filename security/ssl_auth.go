@@ -362,6 +362,14 @@ func (ssl *SSLAuthenticator) runPhase(ctx context.Context, name string, isClient
 		slog.Debug(fmt.Sprintf("🔐 SSL: %s round %d (c: %d, s: %d)", name, round, ssl.clientStatus, ssl.serverStatus), "destination", "cedar")
 		switch {
 		case mine == AuthSSLQuitting:
+			// A send round already carried QUITTING in its own message. A
+			// receive round has sent nothing, so tell the peer now, as
+			// abandonPhase does: otherwise it waits for a message that never
+			// comes until its own deadline. The peer's message for this round
+			// has been read, so the stream is still aligned.
+			if !sending && peer != AuthSSLQuitting {
+				ssl.abandonPhase(ctx, false)
+			}
 			return fmt.Errorf("SSL %s failed: %w", name, opErr)
 		case peer == AuthSSLQuitting:
 			return fmt.Errorf("SSL %s failed: %w", name, errSSLPeerQuit)
