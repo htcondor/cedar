@@ -39,6 +39,7 @@ func main() {
 	port, err := strconv.Atoi(portStr)
 	if err != nil {
 		slog.Error(fmt.Sprintf("Invalid port: %s", portStr), "destination", "cedar")
+		os.Exit(1)
 	}
 
 	fmt.Printf("🚀 HTCondor Query Demo Client\n")
@@ -49,6 +50,7 @@ func main() {
 	htcondorClient, err := client.ConnectToAddress(context.Background(), addr)
 	if err != nil {
 		slog.Error(fmt.Sprintf("Failed to connect: %v", err), "destination", "cedar")
+		os.Exit(1)
 	}
 	defer func() { _ = htcondorClient.Close() }()
 
@@ -72,6 +74,7 @@ func main() {
 	negotiation, err := auth.ClientHandshake(context.Background())
 	if err != nil {
 		slog.Error(fmt.Sprintf("Security handshake failed: %v", err), "destination", "cedar")
+		os.Exit(1)
 	}
 
 	fmt.Printf("✅ Security handshake completed successfully\n")
@@ -88,12 +91,14 @@ func main() {
 	err = queryMsg.PutClassAd(context.Background(), queryAd)
 	if err != nil {
 		slog.Error(fmt.Sprintf("Failed to add ClassAd to message: %v", err), "destination", "cedar")
+		os.Exit(1)
 	}
 
 	// Send the message using Message API (flush with End-of-Message)
 	err = queryMsg.FlushFrame(context.Background(), true)
 	if err != nil {
 		slog.Error(fmt.Sprintf("Failed to send query message: %v", err), "destination", "cedar")
+		os.Exit(1)
 	}
 
 	fmt.Printf("📨 Query sent, processing responses...\n\n")
@@ -108,6 +113,7 @@ func main() {
 		more, err := responseMsg.GetInt32(context.Background())
 		if err != nil {
 			slog.Error(fmt.Sprintf("Failed to read 'more' flag: %v", err), "destination", "cedar")
+			os.Exit(1)
 		}
 
 		if more == 0 {
@@ -119,6 +125,7 @@ func main() {
 		ad, err := responseMsg.GetClassAd(context.Background())
 		if err != nil {
 			slog.Error(fmt.Sprintf("Failed to read ClassAd: %v", err), "destination", "cedar")
+			os.Exit(1)
 		}
 
 		adsReceived++

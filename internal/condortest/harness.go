@@ -70,6 +70,26 @@ func New(t *testing.T) *Harness {
 	return NewWithConfig(t, "")
 }
 
+// newSocketDir creates the secure socket directory and registers its removal in
+// the same step. Registering the cleanup at creation time is what keeps the
+// directory from outliving a t.Fatalf raised later in harness setup, before the
+// Shutdown cleanup exists.
+func newSocketDir(t *testing.T) string {
+	t.Helper()
+
+	dir, err := os.MkdirTemp("/tmp", "htc_sock_*")
+	if err != nil {
+		t.Fatalf("Failed to create secure socket directory: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Logf("Failed to remove socket directory %s: %v", dir, err)
+		}
+	})
+
+	return dir
+}
+
 // NewWithConfig allows injecting extra HTCondor config lines (e.g., extra daemons).
 func NewWithConfig(t *testing.T, extraConfig string) *Harness {
 	t.Helper()
@@ -116,10 +136,7 @@ func NewWithConfig(t *testing.T, extraConfig string) *Harness {
 	tmpDir := t.TempDir()
 
 	// Create secure socket directory in /tmp to avoid path length issues
-	socketDir, err := os.MkdirTemp("/tmp", "htc_sock_*")
-	if err != nil {
-		t.Fatalf("Failed to create secure socket directory: %v", err)
-	}
+	socketDir := newSocketDir(t)
 
 	h := &Harness{
 		tmpDir:      tmpDir,
