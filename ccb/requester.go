@@ -569,42 +569,8 @@ func dialBrokerAuthOnce(ctx context.Context, brokerAddr, clientName string, sec 
 		return nil, nil, err
 	}
 
-	// Clone the security config and re-point it at the broker.
-	//
-	// What arrives here is the caller's config for the TARGET --
-	// client.Connect hands c.config.Security straight to ccb.Dial -- so
-	// it carries that target's identity. Three fields decide who this
-	// handshake is aimed at, and all three have to be re-aimed or the
-	// broker is offered a session -- or asked for a certificate -- that
-	// belongs to somebody else:
-	//
-	//   PeerName is what ClientHandshake keys the session cache on, in
-	//   preference to the stream's peer address. Left as the target, every
-	//   broker in the target's CCBID shares one cache entry: a session
-	//   minted with one broker is then offered to the next, which has
-	//   never heard of it, and the dial fails with "session not found on
-	//   server" -- repeatedly, because the entry keeps being re-created
-	//   under that same shared key.
-	//
-	//   SessionID names a pre-registered session to resume outright,
-	//   skipping negotiation. On this path it is the target's, typically a
-	//   schedd-minted claim; offering it to a broker asks the broker to
-	//   resume a session it never issued.
-	//
-	//   ServerName is the name SSL verifies the peer certificate
-	//   against, and an explicit one beats the name the handshake would
-	//   otherwise derive from the stream's peer address. Left as the
-	//   target, the broker's certificate is checked against the target's
-	//   hostname and the dial fails with "certificate is valid for
-	//   <broker>, not <target>". Clearing it hands the derivation back to
-	//   the SSL handshake, which takes the name from the peer address --
-	//   brokerAddr, set by dialBrokerWith.
-	cfg := *sec
-	cfg.Command = command
-	cfg.PeerName = brokerAddr
-	cfg.SessionID = ""
-	cfg.ServerName = ""
-	auth := security.NewAuthenticator(&cfg, s)
+	cfg := brokerConfig(sec, brokerAddr, command)
+	auth := security.NewAuthenticator(cfg, s)
 	neg, err := auth.ClientHandshake(ctx)
 	if err != nil {
 		_ = s.GetConnection().Close()
