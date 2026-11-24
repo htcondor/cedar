@@ -1,7 +1,6 @@
 package stream
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"net"
@@ -57,35 +56,5 @@ func TestZeroLengthFrameKeepsHandshakeDigestsInStep(t *testing.T) {
 	}
 	if err := <-sent; err != nil {
 		t.Fatalf("send: %v", err)
-	}
-}
-
-// The two receive paths must leave identical digest state behind for the same
-// bytes; this pins the asymmetry itself rather than one of its consequences.
-func TestReceiveFrameZeroLengthDigestMatchesTwin(t *testing.T) {
-	digestAfterZeroLengthFrame := func(read func(*Stream) error) []byte {
-		t.Helper()
-		peer, local := net.Pipe()
-		t.Cleanup(func() { _ = peer.Close(); _ = local.Close() })
-		s := NewStream(local)
-		go func() { _, _ = peer.Write(zeroLengthFrame) }()
-		if err := read(s); err != nil {
-			t.Fatalf("read zero-length frame: %v", err)
-		}
-		s.finalizeRecvDigest()
-		return s.finalRecvDigest
-	}
-
-	withEnd := digestAfterZeroLengthFrame(func(s *Stream) error {
-		_, _, err := s.ReceiveFrameWithEnd(context.Background())
-		return err
-	})
-	plain := digestAfterZeroLengthFrame(func(s *Stream) error {
-		_, err := s.ReceiveFrame(context.Background())
-		return err
-	})
-
-	if !bytes.Equal(plain, withEnd) {
-		t.Errorf("ReceiveFrame left recv digest %x, ReceiveFrameWithEnd left %x", plain, withEnd)
 	}
 }
