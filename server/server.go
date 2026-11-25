@@ -285,12 +285,21 @@ func New(secConfig *security.SecurityConfig) *Server {
 // (FQUMapper), advertises every command it is authorized for, and is bounded
 // by its credential's authorization limits as one negotiated under
 // SecurityConfig is.
+//
+// It also gets SecurityConfig's session cache. A session is stored under the
+// config it was negotiated with, but a resumption looks it up before the
+// command's config is chosen, in SecurityConfig's cache; a per-command config
+// with no cache of its own would store into the global one, where a server
+// with its own cache never looks.
 func (s *Server) inheritPolicyHooks(c *security.SecurityConfig) {
 	if c.PostAuthPolicy == nil {
 		c.PostAuthPolicy = s.SecurityConfig.PostAuthPolicy
 	}
 	if c.CommandPerms == nil {
 		c.CommandPerms = s.SecurityConfig.CommandPerms
+	}
+	if c.SessionCache == nil {
+		c.SessionCache = s.SecurityConfig.SessionCache
 	}
 }
 
