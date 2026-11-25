@@ -250,7 +250,9 @@ func TestAdmitConnectionReleaseBracketsPending(t *testing.T) {
 			t.Fatal("handler never ran")
 		}
 		close(finish)
-		<-served
+		if err := <-served; err != nil {
+			t.Errorf("ServeConn = %v", err)
+		}
 		if n := releases.Load(); n != 1 {
 			t.Errorf("release ran %d times, want 1", n)
 		}
