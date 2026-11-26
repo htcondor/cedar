@@ -216,6 +216,23 @@ type Server struct {
 	// outbound connection attempts.
 	MaxPendingConnections int
 
+	// AdmitConnection, if set, decides whether to take a connection before
+	// anything is read from it. Serve calls it once per connection, after the
+	// MaxPendingConnections check; ServeConn does too, so a connection a
+	// program hands it directly is subject to the same policy (a program that
+	// trusts such a connection can recognise it in the callback).
+	//
+	// A non-nil error refuses the connection: it is closed unread and ServeConn
+	// returns the error wrapped in ErrConnectionNotAdmitted. Otherwise release,
+	// if non-nil, runs exactly once when the connection leaves the pending
+	// phase -- it reached its handler, or it failed or ran out of
+	// HandshakeDeadline first. Between the two the connection is pending, so a
+	// program can bound what one source holds there (a per-source
+	// MaxPendingConnections) as well as how often it may connect.
+	//
+	// It runs on the accept path, so it must be quick and must not block.
+	AdmitConnection func(conn net.Conn) (release func(), err error)
+
 	pending atomic.Int64
 
 	mu       sync.RWMutex
@@ -235,6 +252,10 @@ var ErrTooManyPendingConnections = errors.New("cedar/server: too many connection
 // ErrHandshakeDeadline is returned by ServeConn for a connection closed
 // because it did not reach its handler within HandshakeDeadline.
 var ErrHandshakeDeadline = errors.New("cedar/server: connection did not reach a handler before the handshake deadline")
+
+// ErrConnectionNotAdmitted is returned by ServeConn, wrapping the callback's
+// error, for a connection AdmitConnection refused.
+var ErrConnectionNotAdmitted = errors.New("cedar/server: connection not admitted")
 
 // New creates a Server with the given server-side security configuration. It
 // installs the server's ValidCommands computation as the security layer's
@@ -264,12 +285,21 @@ func New(secConfig *security.SecurityConfig) *Server {
 // (FQUMapper), advertises every command it is authorized for, and is bounded
 // by its credential's authorization limits as one negotiated under
 // SecurityConfig is.
+//
+// It also gets SecurityConfig's session cache. A session is stored under the
+// config it was negotiated with, but a resumption looks it up before the
+// command's config is chosen, in SecurityConfig's cache; a per-command config
+// with no cache of its own would store into the global one, where a server
+// with its own cache never looks.
 func (s *Server) inheritPolicyHooks(c *security.SecurityConfig) {
 	if c.PostAuthPolicy == nil {
 		c.PostAuthPolicy = s.SecurityConfig.PostAuthPolicy
 	}
 	if c.CommandPerms == nil {
 		c.CommandPerms = s.SecurityConfig.CommandPerms
+	}
+	if c.SessionCache == nil {
+		c.SessionCache = s.SecurityConfig.SessionCache
 	}
 }
 
@@ -571,13 +601,15 @@ func KeepOpen() error { return errKeepOpen }
 type pendingConn struct {
 	s       *Server
 	timer   *time.Timer
+	release func() // from AdmitConnection; nil if none
 	expired atomic.Bool
 	once    sync.Once
 	err     error
 }
 
 // admit counts conn as pending and arms its deadline. It returns
-// ErrTooManyPendingConnections when the cap is reached.
+// ErrTooManyPendingConnections when the cap is reached, and
+// ErrConnectionNotAdmitted when AdmitConnection refuses it.
 func (s *Server) admit(conn net.Conn) (*pendingConn, error) {
 	n := s.pending.Add(1)
 	if limit := s.MaxPendingConnections; limit > 0 && n > int64(limit) {
@@ -585,6 +617,14 @@ func (s *Server) admit(conn net.Conn) (*pendingConn, error) {
 		return nil, ErrTooManyPendingConnections
 	}
 	p := &pendingConn{s: s}
+	if s.AdmitConnection != nil {
+		release, err := s.AdmitConnection(conn)
+		if err != nil {
+			s.pending.Add(-1)
+			return nil, fmt.Errorf("%w: %w", ErrConnectionNotAdmitted, err)
+		}
+		p.release = release
+	}
 	if d := s.HandshakeDeadline; d > 0 {
 		p.timer = time.AfterFunc(d, func() {
 			p.expired.Store(true)
@@ -600,6 +640,9 @@ func (s *Server) admit(conn net.Conn) (*pendingConn, error) {
 func (p *pendingConn) done() error {
 	p.once.Do(func() {
 		p.s.pending.Add(-1)
+		if p.release != nil {
+			p.release()
+		}
 		if p.timer != nil && !p.timer.Stop() {
 			p.err = ErrHandshakeDeadline
 		}

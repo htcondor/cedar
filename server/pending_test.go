@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -187,5 +188,131 @@ func TestMaxPendingConnections(t *testing.T) {
 	waitPending(2)
 	if closedWithin(t, again, 200*time.Millisecond) {
 		t.Error("connection under the cap was closed")
+	}
+}
+
+// TestAdmitConnectionRefuses: a connection AdmitConnection refuses is closed
+// unread, ServeConn reports why, and it does not stay counted as pending.
+func TestAdmitConnectionRefuses(t *testing.T) {
+	srv := New(nil)
+	errBusy := errors.New("source over its rate")
+	srv.AdmitConnection = func(net.Conn) (func(), error) { return nil, errBusy }
+	client, server := acceptPair(t)
+
+	served := make(chan error, 1)
+	go func() { served <- srv.ServeConn(context.Background(), server) }()
+
+	if !closedWithin(t, client, 5*time.Second) {
+		t.Fatal("refused connection was not closed")
+	}
+	err := <-served
+	if !errors.Is(err, ErrConnectionNotAdmitted) || !errors.Is(err, errBusy) {
+		t.Errorf("ServeConn = %v, want ErrConnectionNotAdmitted wrapping the callback's error", err)
+	}
+	if n := srv.pending.Load(); n != 0 {
+		t.Errorf("%d connections still counted pending", n)
+	}
+}
+
+// TestAdmitConnectionReleaseBracketsPending: release runs exactly once, when
+// the connection leaves the pending phase -- on reaching its handler (before
+// the handler finishes), or on the handshake deadline.
+func TestAdmitConnectionReleaseBracketsPending(t *testing.T) {
+	t.Run("handler", func(t *testing.T) {
+		srv := New(nil)
+		srv.HandshakeDeadline = 0
+		var releases atomic.Int32
+		srv.AdmitConnection = func(net.Conn) (func(), error) {
+			return func() { releases.Add(1) }, nil
+		}
+		inHandler := make(chan int32, 1)
+		finish := make(chan struct{})
+		srv.HandleRaw(ccb.CommandReverseConnect, func(context.Context, *Conn) error {
+			inHandler <- releases.Load()
+			<-finish
+			return nil
+		})
+		client, server := acceptPair(t)
+		served := make(chan error, 1)
+		go func() { served <- srv.ServeConn(context.Background(), server) }()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := ccb.WriteReverseConnect(ctx, stream.NewStream(client), "id", "1", "<10.0.0.9:9618>"); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case n := <-inHandler:
+			if n != 1 {
+				t.Errorf("release ran %d times before the handler, want 1", n)
+			}
+		case <-ctx.Done():
+			t.Fatal("handler never ran")
+		}
+		close(finish)
+		if err := <-served; err != nil {
+			t.Errorf("ServeConn = %v", err)
+		}
+		if n := releases.Load(); n != 1 {
+			t.Errorf("release ran %d times, want 1", n)
+		}
+	})
+	t.Run("deadline", func(t *testing.T) {
+		srv := New(nil)
+		srv.HandshakeDeadline = 100 * time.Millisecond
+		var releases atomic.Int32
+		srv.AdmitConnection = func(net.Conn) (func(), error) {
+			return func() { releases.Add(1) }, nil
+		}
+		_, server := acceptPair(t)
+		served := make(chan error, 1)
+		go func() { served <- srv.ServeConn(context.Background(), server) }()
+		select {
+		case err := <-served:
+			if !errors.Is(err, ErrHandshakeDeadline) {
+				t.Errorf("ServeConn = %v, want ErrHandshakeDeadline", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("ServeConn did not return")
+		}
+		if n := releases.Load(); n != 1 {
+			t.Errorf("release ran %d times, want 1", n)
+		}
+	})
+}
+
+// TestAdmitConnectionSkippedOverGlobalCap: a connection refused by
+// MaxPendingConnections never reaches AdmitConnection, so a callback counting
+// what it admitted is not left holding a slot nothing will release.
+func TestAdmitConnectionSkippedOverGlobalCap(t *testing.T) {
+	srv := New(nil)
+	srv.HandshakeDeadline = 0
+	srv.MaxPendingConnections = 1
+	var admitted, released atomic.Int32
+	srv.AdmitConnection = func(net.Conn) (func(), error) {
+		admitted.Add(1)
+		return func() { released.Add(1) }, nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	_, first := acceptPair(t)
+	go func() { _ = srv.ServeConn(ctx, first) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for admitted.Load() != 1 {
+		if time.Now().After(deadline) {
+			t.Fatal("first connection never admitted")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	_, over := acceptPair(t)
+	if err := srv.ServeConn(ctx, over); !errors.Is(err, ErrTooManyPendingConnections) {
+		t.Fatalf("ServeConn over the cap = %v, want ErrTooManyPendingConnections", err)
+	}
+	if n := admitted.Load(); n != 1 {
+		t.Errorf("AdmitConnection ran %d times, want 1", n)
+	}
+	if n := released.Load(); n != 0 {
+		t.Errorf("release ran %d times with the first connection still pending", n)
 	}
 }
